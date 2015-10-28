@@ -1,6 +1,7 @@
 class BaseElem {
-    constructor() {
-        this.name = 'Base';
+    constructor(name) {
+        this.name = name;
+        this.elem = document.querySelector(this.name)
     }
 }
 
@@ -11,7 +12,8 @@ class MainElem extends BaseElem {
     }
     show(){
         console.log(this.name)
-        document.querySelector(this.name).style.display = 'block'
+        this.elem.style.display = 'block'
+        this.elem.style.backgroundColor = '#B8CCCA'
     }
 
 }

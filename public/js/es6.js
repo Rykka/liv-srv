@@ -8,10 +8,11 @@ function _inherits(subClass, superClass) { if (typeof superClass !== 'function' 
 
 function _classCallCheck(instance, Constructor) { if (!(instance instanceof Constructor)) { throw new TypeError('Cannot call a class as a function'); } }
 
-var BaseElem = function BaseElem() {
+var BaseElem = function BaseElem(name) {
     _classCallCheck(this, BaseElem);
 
-    this.name = 'Base';
+    this.name = name;
+    this.elem = document.querySelector(this.name);
 };
 
 var MainElem = (function (_BaseElem) {
@@ -27,7 +28,8 @@ var MainElem = (function (_BaseElem) {
         key: 'show',
         value: function show() {
             console.log(this.name);
-            document.querySelector(this.name).style.display = 'block';
+            this.elem.style.display = 'block';
+            this.elem.style.backgroundColor = '#B8CCCA';
         }
     }]);
 
