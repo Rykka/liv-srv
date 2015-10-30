@@ -6,9 +6,21 @@
     <link href='/css/scss.css' rel='stylesheet'/>
     <link href='/css/less.css' rel='stylesheet'/>
     <style>
+
+        body > p,body > div > div {
+            line-height: 1.3em;
+            margin:4px;
+            padding:2px;
+        }
+
+        h1, h2 {
+            margin:6px;
+        }
+
         .hide {
             display: none;
         }
+
     </style>
 </head>
 <body>
@@ -24,11 +36,17 @@
 
 <h2>JS</h2>
 
-<p class='hide vanilla'> Hello vanilla</p>
+<p class='hide vanilla'> Hello vanilla-js</p>
 <p class='hide typescript'> Hello Typescript </p>
 <p class='hide coffee'> Hello Coffee </p>
 <div class="react"></div>
 <p class='hide es6'> Hello ES6</p>
+
+
+<h2>HTML</h2>
+
+<p class='hide browserify'> Hello Browserify</p>
+<p class='hide browserify2'> Hello Browserify2</p>
 
 <script src='/js/vanilla.js'></script>
 <script src='/js/coffee.js'></script>
@@ -38,6 +56,9 @@
 <script src="/js/lib/react.js"></script>
 <script src="/js/lib/react-dom.js"></script>
 <script src='/js/react.js'></script>
+
+<script src='/js/lib/lodash.js'></script>
+<script src='/js/main.js'></script>
 
 </body>
 </html>
