@@ -5,7 +5,7 @@ livereload development with server and src compiling.
 
 1. git clone from git::
 
-   git clone https://github.com/Rykka/live-srv
+   git clone https://github.com/Rykka/liv-srv
 
 2. open the dir and install npm modules::
 

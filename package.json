@@ -1,6 +1,6 @@
 {
   "name": "liv-srv",
-  "version": "0.1.3",
+  "version": "0.1.5",
   "scripts": {
     "start": "node ./bin/www"
   },
