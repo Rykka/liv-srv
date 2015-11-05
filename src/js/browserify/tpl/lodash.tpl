@@ -1,5 +1,4 @@
-<div>Hello <%- name %></div>
-<div>
+<div>Hello <%- name %> ::
 <% _.forEach(stories, function(story) { %>
     <span><%- story.name %></span>
     <span style='font-size:0.5em;'> <%- story.body %></span>

@@ -1,35 +1,34 @@
 var gulp = require('gulp');
-var path = require('path');
-var nodemon = require('nodemon');
-var livereload = require('gulp-livereload');
+var gutil = require("gulp-util");
+var chalk = gutil.colors
+var spawn = require('child_process').spawn
+var p
 
-var is_start = false ;
+gulp.task('default', function() {
+    // The default task is merely a task manager
+    console.log('======= Start ' + chalk.blue('Gulp')+' Task =======')
 
-gulp.task('default',  function() {
+    p = spawn('gulp', ['watch'], {stdio:'inherit'})
 
-    livereload.listen()
+    gulp.watch(['gulpfile.js', 'gulp/**/*.js'], ['gulp-reload']);
 
-    nodemon({
-        script: 'bin/www',
-        ext : 'js',
-        ignore: ['public/**','src/**'],
-        env : {
-            "NODE_ENV": "development",
-            "PORT": "3333"
-        },
-    }).on('start', function() { // The start event will emit on every reload.
-        if (!is_start) {
-            console.log('Start server')
-            is_start = true
-        }
-    }).on('restart', function() {
-        // Emit reload after server started, 
-        // so no CONNECTION-FAILED page will appear.
-        setTimeout(function() {
-            livereload.reload()
-            console.log('Restart server')
-        }, 500);
-    })
+    process.on('exit', function(code) {
+        gutil.log('======= Finish ' + chalk.blue('Gulp')+' Task=======')
+    });
 
 });
 
+gulp.task('gulp-reload', function(){
+
+    if (p && !p.killed) {
+        gutil.log('kill ' + p.pid)
+        p.kill()
+    } else {
+        gutil.log('already dead')
+    }
+    setTimeout(function() { 
+        gutil.log('======= Start ' + chalk.blue('Watch')+' =======')
+        p = spawn('gulp', ['watch'], {stdio:'inherit'})
+    }, 20);
+
+})

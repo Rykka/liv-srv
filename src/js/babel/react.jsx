@@ -1,7 +1,7 @@
 var CommentBox = React.createClass({
   render: function() {
     return (
-      <div className="commentBox" style={{backgroundColor:'#ADBDCC'}}>
+      <div className="commentBox" >
         Hello React
       </div>
     );

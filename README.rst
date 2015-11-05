@@ -1,11 +1,16 @@
 live-srv
 ========
 
+.. raw:: html
+
+   <style>.strike {text-decoration: line-through;}</style>
+
+
 livereload development with server and src compiling.
 
 1. git clone from git::
 
-   git clone https://github.com/Rykka/liv-srv
+     git clone https://github.com/Rykka/liv-srv
 
 2. open the dir and install npm modules::
 
@@ -17,8 +22,10 @@ livereload development with server and src compiling.
     gulp
 
 4. Open The Chrome Browser with http://localhost:3333
-    
-5. Install the chome plugin livereload_
+
+.. container:: strike. 
+
+      5. Install the chome plugin livereload_
 
 6. Open ``src`` dir and start developing~
 

@@ -2,10 +2,12 @@ var gulp = require('gulp');
 var sass = require('gulp-sass');
 var path = require('path');
 var plumber = require('gulp-plumber');
+var gutil = require("gulp-util");
+var watch_list = require('gulp/config').watch_list
 
 gulp.task('sass', function () {
 
-  console.log('Recompile sass');
+  gutil.log('Compile sass');
 
 
   return gulp.src(['./src/css/sass/**.sass', './src//css/sass/**.scss'])
@@ -16,4 +18,4 @@ gulp.task('sass', function () {
     .pipe(gulp.dest('./public/css'));
 });
 
-gulp.watch(['src/css/**/*.sass', 'src/css/**/*.scss'], ['sass'])
+watch_list.push([['src/css/**/*.sass', 'src/css/**/*.scss'], ['sass']])

@@ -1,5 +1,5 @@
-<div>Hello {{ name }}</div>
 <div>
+Hello {{ name }} ::
 {{#each stories }}
     <span >{{ name}}</span>
     <span style='font-size:0.5em;'> {{ body }}</span>

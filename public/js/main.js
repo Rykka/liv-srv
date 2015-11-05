@@ -1,6 +1,844 @@
 (function e(t,n,r){function s(o,u){if(!n[o]){if(!t[o]){var a=typeof require=="function"&&require;if(!u&&a)return a(o,!0);if(i)return i(o,!0);var f=new Error("Cannot find module '"+o+"'");throw f.code="MODULE_NOT_FOUND",f}var l=n[o]={exports:{}};t[o][0].call(l.exports,function(e){var n=t[o][1][e];return s(n?n:e)},l,l.exports,e,t,n,r)}return n[o].exports}var i=typeof require=="function"&&require;for(var o=0;o<r.length;o++)s(r[o]);return s})({1:[function(require,module,exports){
+/*!
+ * artTemplate - Template Engine
+ * https://github.com/aui/artTemplate
+ * Released under the MIT, BSD, and GPL Licenses
+ */
+ 
+!(function () {
 
+
+/**
+ * 模板引擎
+ * @name    template
+ * @param   {String}            模板名
+ * @param   {Object, String}    数据。如果为字符串则编译并缓存编译结果
+ * @return  {String, Function}  渲染好的HTML字符串或者渲染方法
+ */
+var template = function (filename, content) {
+    return typeof content === 'string'
+    ?   compile(content, {
+            filename: filename
+        })
+    :   renderFile(filename, content);
+};
+
+
+template.version = '3.0.0';
+
+
+/**
+ * 设置全局配置
+ * @name    template.config
+ * @param   {String}    名称
+ * @param   {Any}       值
+ */
+template.config = function (name, value) {
+    defaults[name] = value;
+};
+
+
+
+var defaults = template.defaults = {
+    openTag: '<%',    // 逻辑语法开始标签
+    closeTag: '%>',   // 逻辑语法结束标签
+    escape: true,     // 是否编码输出变量的 HTML 字符
+    cache: true,      // 是否开启缓存（依赖 options 的 filename 字段）
+    compress: false,  // 是否压缩输出
+    parser: null      // 自定义语法格式器 @see: template-syntax.js
+};
+
+
+var cacheStore = template.cache = {};
+
+
+/**
+ * 渲染模板
+ * @name    template.render
+ * @param   {String}    模板
+ * @param   {Object}    数据
+ * @return  {String}    渲染好的字符串
+ */
+template.render = function (source, options) {
+    return compile(source, options);
+};
+
+
+/**
+ * 渲染模板(根据模板名)
+ * @name    template.render
+ * @param   {String}    模板名
+ * @param   {Object}    数据
+ * @return  {String}    渲染好的字符串
+ */
+var renderFile = template.renderFile = function (filename, data) {
+    var fn = template.get(filename) || showDebugInfo({
+        filename: filename,
+        name: 'Render Error',
+        message: 'Template not found'
+    });
+    return data ? fn(data) : fn;
+};
+
+
+/**
+ * 获取编译缓存（可由外部重写此方法）
+ * @param   {String}    模板名
+ * @param   {Function}  编译好的函数
+ */
+template.get = function (filename) {
+
+    var cache;
+    
+    if (cacheStore[filename]) {
+        // 使用内存缓存
+        cache = cacheStore[filename];
+    } else if (typeof document === 'object') {
+        // 加载模板并编译
+        var elem = document.getElementById(filename);
+        
+        if (elem) {
+            var source = (elem.value || elem.innerHTML)
+            .replace(/^\s*|\s*$/g, '');
+            cache = compile(source, {
+                filename: filename
+            });
+        }
+    }
+
+    return cache;
+};
+
+
+var toString = function (value, type) {
+
+    if (typeof value !== 'string') {
+
+        type = typeof value;
+        if (type === 'number') {
+            value += '';
+        } else if (type === 'function') {
+            value = toString(value.call(value));
+        } else {
+            value = '';
+        }
+    }
+
+    return value;
+
+};
+
+
+var escapeMap = {
+    "<": "&#60;",
+    ">": "&#62;",
+    '"': "&#34;",
+    "'": "&#39;",
+    "&": "&#38;"
+};
+
+
+var escapeFn = function (s) {
+    return escapeMap[s];
+};
+
+var escapeHTML = function (content) {
+    return toString(content)
+    .replace(/&(?![\w#]+;)|[<>"']/g, escapeFn);
+};
+
+
+var isArray = Array.isArray || function (obj) {
+    return ({}).toString.call(obj) === '[object Array]';
+};
+
+
+var each = function (data, callback) {
+    var i, len;        
+    if (isArray(data)) {
+        for (i = 0, len = data.length; i < len; i++) {
+            callback.call(data, data[i], i, data);
+        }
+    } else {
+        for (i in data) {
+            callback.call(data, data[i], i);
+        }
+    }
+};
+
+
+var utils = template.utils = {
+
+	$helpers: {},
+
+    $include: renderFile,
+
+    $string: toString,
+
+    $escape: escapeHTML,
+
+    $each: each
+    
+};/**
+ * 添加模板辅助方法
+ * @name    template.helper
+ * @param   {String}    名称
+ * @param   {Function}  方法
+ */
+template.helper = function (name, helper) {
+    helpers[name] = helper;
+};
+
+var helpers = template.helpers = utils.$helpers;
+
+
+
+
+/**
+ * 模板错误事件（可由外部重写此方法）
+ * @name    template.onerror
+ * @event
+ */
+template.onerror = function (e) {
+    var message = 'Template Error\n\n';
+    for (var name in e) {
+        message += '<' + name + '>\n' + e[name] + '\n\n';
+    }
+    
+    if (typeof console === 'object') {
+        console.error(message);
+    }
+};
+
+
+// 模板调试器
+var showDebugInfo = function (e) {
+
+    template.onerror(e);
+    
+    return function () {
+        return '{Template Error}';
+    };
+};
+
+
+/**
+ * 编译模板
+ * 2012-6-6 @TooBug: define 方法名改为 compile，与 Node Express 保持一致
+ * @name    template.compile
+ * @param   {String}    模板字符串
+ * @param   {Object}    编译选项
+ *
+ *      - openTag       {String}
+ *      - closeTag      {String}
+ *      - filename      {String}
+ *      - escape        {Boolean}
+ *      - compress      {Boolean}
+ *      - debug         {Boolean}
+ *      - cache         {Boolean}
+ *      - parser        {Function}
+ *
+ * @return  {Function}  渲染方法
+ */
+var compile = template.compile = function (source, options) {
+    
+    // 合并默认配置
+    options = options || {};
+    for (var name in defaults) {
+        if (options[name] === undefined) {
+            options[name] = defaults[name];
+        }
+    }
+
+
+    var filename = options.filename;
+
+
+    try {
+        
+        var Render = compiler(source, options);
+        
+    } catch (e) {
+    
+        e.filename = filename || 'anonymous';
+        e.name = 'Syntax Error';
+
+        return showDebugInfo(e);
+        
+    }
+    
+    
+    // 对编译结果进行一次包装
+
+    function render (data) {
+        
+        try {
+            
+            return new Render(data, filename) + '';
+            
+        } catch (e) {
+            
+            // 运行时出错后自动开启调试模式重新编译
+            if (!options.debug) {
+                options.debug = true;
+                return compile(source, options)(data);
+            }
+            
+            return showDebugInfo(e)();
+            
+        }
+        
+    }
+    
+
+    render.prototype = Render.prototype;
+    render.toString = function () {
+        return Render.toString();
+    };
+
+
+    if (filename && options.cache) {
+        cacheStore[filename] = render;
+    }
+
+    
+    return render;
+
+};
+
+
+
+
+// 数组迭代
+var forEach = utils.$each;
+
+
+// 静态分析模板变量
+var KEYWORDS =
+    // 关键字
+    'break,case,catch,continue,debugger,default,delete,do,else,false'
+    + ',finally,for,function,if,in,instanceof,new,null,return,switch,this'
+    + ',throw,true,try,typeof,var,void,while,with'
+
+    // 保留字
+    + ',abstract,boolean,byte,char,class,const,double,enum,export,extends'
+    + ',final,float,goto,implements,import,int,interface,long,native'
+    + ',package,private,protected,public,short,static,super,synchronized'
+    + ',throws,transient,volatile'
+
+    // ECMA 5 - use strict
+    + ',arguments,let,yield'
+
+    + ',undefined';
+
+var REMOVE_RE = /\/\*[\w\W]*?\*\/|\/\/[^\n]*\n|\/\/[^\n]*$|"(?:[^"\\]|\\[\w\W])*"|'(?:[^'\\]|\\[\w\W])*'|\s*\.\s*[$\w\.]+/g;
+var SPLIT_RE = /[^\w$]+/g;
+var KEYWORDS_RE = new RegExp(["\\b" + KEYWORDS.replace(/,/g, '\\b|\\b') + "\\b"].join('|'), 'g');
+var NUMBER_RE = /^\d[^,]*|,\d[^,]*/g;
+var BOUNDARY_RE = /^,+|,+$/g;
+var SPLIT2_RE = /^$|,+/;
+
+
+// 获取变量
+function getVariable (code) {
+    return code
+    .replace(REMOVE_RE, '')
+    .replace(SPLIT_RE, ',')
+    .replace(KEYWORDS_RE, '')
+    .replace(NUMBER_RE, '')
+    .replace(BOUNDARY_RE, '')
+    .split(SPLIT2_RE);
+};
+
+
+// 字符串转义
+function stringify (code) {
+    return "'" + code
+    // 单引号与反斜杠转义
+    .replace(/('|\\)/g, '\\$1')
+    // 换行符转义(windows + linux)
+    .replace(/\r/g, '\\r')
+    .replace(/\n/g, '\\n') + "'";
+}
+
+
+function compiler (source, options) {
+    
+    var debug = options.debug;
+    var openTag = options.openTag;
+    var closeTag = options.closeTag;
+    var parser = options.parser;
+    var compress = options.compress;
+    var escape = options.escape;
+    
+
+    
+    var line = 1;
+    var uniq = {$data:1,$filename:1,$utils:1,$helpers:1,$out:1,$line:1};
+    
+
+
+    var isNewEngine = ''.trim;// '__proto__' in {}
+    var replaces = isNewEngine
+    ? ["$out='';", "$out+=", ";", "$out"]
+    : ["$out=[];", "$out.push(", ");", "$out.join('')"];
+
+    var concat = isNewEngine
+        ? "$out+=text;return $out;"
+        : "$out.push(text);";
+          
+    var print = "function(){"
+    +      "var text=''.concat.apply('',arguments);"
+    +       concat
+    +  "}";
+
+    var include = "function(filename,data){"
+    +      "data=data||$data;"
+    +      "var text=$utils.$include(filename,data,$filename);"
+    +       concat
+    +   "}";
+
+    var headerCode = "'use strict';"
+    + "var $utils=this,$helpers=$utils.$helpers,"
+    + (debug ? "$line=0," : "");
+    
+    var mainCode = replaces[0];
+
+    var footerCode = "return new String(" + replaces[3] + ");"
+    
+    // html与逻辑语法分离
+    forEach(source.split(openTag), function (code) {
+        code = code.split(closeTag);
+        
+        var $0 = code[0];
+        var $1 = code[1];
+        
+        // code: [html]
+        if (code.length === 1) {
+            
+            mainCode += html($0);
+         
+        // code: [logic, html]
+        } else {
+            
+            mainCode += logic($0);
+            
+            if ($1) {
+                mainCode += html($1);
+            }
+        }
+        
+
+    });
+    
+    var code = headerCode + mainCode + footerCode;
+    
+    // 调试语句
+    if (debug) {
+        code = "try{" + code + "}catch(e){"
+        +       "throw {"
+        +           "filename:$filename,"
+        +           "name:'Render Error',"
+        +           "message:e.message,"
+        +           "line:$line,"
+        +           "source:" + stringify(source)
+        +           ".split(/\\n/)[$line-1].replace(/^\\s+/,'')"
+        +       "};"
+        + "}";
+    }
+    
+    
+    
+    try {
+        
+        
+        var Render = new Function("$data", "$filename", code);
+        Render.prototype = utils;
+
+        return Render;
+        
+    } catch (e) {
+        e.temp = "function anonymous($data,$filename) {" + code + "}";
+        throw e;
+    }
+
+
+
+    
+    // 处理 HTML 语句
+    function html (code) {
+        
+        // 记录行号
+        line += code.split(/\n/).length - 1;
+
+        // 压缩多余空白与注释
+        if (compress) {
+            code = code
+            .replace(/\s+/g, ' ')
+            .replace(/<!--[\w\W]*?-->/g, '');
+        }
+        
+        if (code) {
+            code = replaces[1] + stringify(code) + replaces[2] + "\n";
+        }
+
+        return code;
+    }
+    
+    
+    // 处理逻辑语句
+    function logic (code) {
+
+        var thisLine = line;
+       
+        if (parser) {
+        
+             // 语法转换插件钩子
+            code = parser(code, options);
+            
+        } else if (debug) {
+        
+            // 记录行号
+            code = code.replace(/\n/g, function () {
+                line ++;
+                return "$line=" + line +  ";";
+            });
+            
+        }
+        
+        
+        // 输出语句. 编码: <%=value%> 不编码:<%=#value%>
+        // <%=#value%> 等同 v2.0.3 之前的 <%==value%>
+        if (code.indexOf('=') === 0) {
+
+            var escapeSyntax = escape && !/^=[=#]/.test(code);
+
+            code = code.replace(/^=[=#]?|[\s;]*$/g, '');
+
+            // 对内容编码
+            if (escapeSyntax) {
+
+                var name = code.replace(/\s*\([^\)]+\)/, '');
+
+                // 排除 utils.* | include | print
+                
+                if (!utils[name] && !/^(include|print)$/.test(name)) {
+                    code = "$escape(" + code + ")";
+                }
+
+            // 不编码
+            } else {
+                code = "$string(" + code + ")";
+            }
+            
+
+            code = replaces[1] + code + replaces[2];
+
+        }
+        
+        if (debug) {
+            code = "$line=" + thisLine + ";" + code;
+        }
+        
+        // 提取模板中的变量名
+        forEach(getVariable(code), function (name) {
+            
+            // name 值可能为空，在安卓低版本浏览器下
+            if (!name || uniq[name]) {
+                return;
+            }
+
+            var value;
+
+            // 声明模板变量
+            // 赋值优先级:
+            // [include, print] > utils > helpers > data
+            if (name === 'print') {
+
+                value = print;
+
+            } else if (name === 'include') {
+                
+                value = include;
+                
+            } else if (utils[name]) {
+
+                value = "$utils." + name;
+
+            } else if (helpers[name]) {
+
+                value = "$helpers." + name;
+
+            } else {
+
+                value = "$data." + name;
+            }
+            
+            headerCode += name + "=" + value + ",";
+            uniq[name] = true;
+            
+            
+        });
+        
+        return code + "\n";
+    }
+    
+    
+};
+
+
+
+// 定义模板引擎的语法
+
+
+defaults.openTag = '{{';
+defaults.closeTag = '}}';
+
+
+var filtered = function (js, filter) {
+    var parts = filter.split(':');
+    var name = parts.shift();
+    var args = parts.join(':') || '';
+
+    if (args) {
+        args = ', ' + args;
+    }
+
+    return '$helpers.' + name + '(' + js + args + ')';
+}
+
+
+defaults.parser = function (code, options) {
+
+    // var match = code.match(/([\w\$]*)(\b.*)/);
+    // var key = match[1];
+    // var args = match[2];
+    // var split = args.split(' ');
+    // split.shift();
+
+    code = code.replace(/^\s/, '');
+
+    var split = code.split(' ');
+    var key = split.shift();
+    var args = split.join(' ');
+
+    
+
+    switch (key) {
+
+        case 'if':
+
+            code = 'if(' + args + '){';
+            break;
+
+        case 'else':
+            
+            if (split.shift() === 'if') {
+                split = ' if(' + split.join(' ') + ')';
+            } else {
+                split = '';
+            }
+
+            code = '}else' + split + '{';
+            break;
+
+        case '/if':
+
+            code = '}';
+            break;
+
+        case 'each':
+            
+            var object = split[0] || '$data';
+            var as     = split[1] || 'as';
+            var value  = split[2] || '$value';
+            var index  = split[3] || '$index';
+            
+            var param   = value + ',' + index;
+            
+            if (as !== 'as') {
+                object = '[]';
+            }
+            
+            code =  '$each(' + object + ',function(' + param + '){';
+            break;
+
+        case '/each':
+
+            code = '});';
+            break;
+
+        case 'echo':
+
+            code = 'print(' + args + ');';
+            break;
+
+        case 'print':
+        case 'include':
+
+            code = key + '(' + split.join(',') + ');';
+            break;
+
+        default:
+
+            // 过滤器（辅助方法）
+            // {{value | filterA:'abcd' | filterB}}
+            // >>> $helpers.filterB($helpers.filterA(value, 'abcd'))
+            // TODO: {{ddd||aaa}} 不包含空格
+            if (/^\s*\|\s*[\w\$]/.test(args)) {
+
+                var escape = true;
+
+                // {{#value | link}}
+                if (code.indexOf('#') === 0) {
+                    code = code.substr(1);
+                    escape = false;
+                }
+
+                var i = 0;
+                var array = code.split('|');
+                var len = array.length;
+                var val = array[i++];
+
+                for (; i < len; i ++) {
+                    val = filtered(val, array[i]);
+                }
+
+                code = (escape ? '=' : '=#') + val;
+
+            // 即将弃用 {{helperName value}}
+            } else if (template.helpers[key]) {
+                
+                code = '=#' + key + '(' + split.join(',') + ');';
+            
+            // 内容直接输出 {{value}}
+            } else {
+
+                code = '=' + code;
+            }
+
+            break;
+    }
+    
+    
+    return code;
+};
+
+
+
+// RequireJS && SeaJS
+if (typeof define === 'function') {
+    define(function() {
+        return template;
+    });
+
+// NodeJS
+} else if (typeof exports !== 'undefined') {
+    module.exports = template;
+} else {
+    this.template = template;
+}
+
+})();
 },{}],2:[function(require,module,exports){
+var fs = require('fs');
+var path = require('path');
+
+module.exports = function (template) {
+
+	var cacheStore = template.cache;
+	var defaults = template.defaults;
+	var rExtname;
+
+	// 提供新的配置字段
+	defaults.base = '';
+	defaults.extname = '.html';
+	defaults.encoding = 'utf-8';
+
+
+	// 重写引擎编译结果获取方法
+	template.get = function (filename) {
+		
+	    var fn;
+	    
+	    if (cacheStore.hasOwnProperty(filename)) {
+	        // 使用内存缓存
+	        fn = cacheStore[filename];
+	    } else {
+	        // 加载模板并编译
+	        var source = readTemplate(filename);
+	        if (typeof source === 'string') {
+	            fn = template.compile(source, {
+	                filename: filename
+	            });
+	        }
+	    }
+
+	    return fn;
+	};
+
+	
+	function readTemplate (id) {
+	    id = path.join(defaults.base, id + defaults.extname);
+	    
+	    if (id.indexOf(defaults.base) !== 0) {
+	        // 安全限制：禁止超出模板目录之外调用文件
+	        throw new Error('"' + id + '" is not in the template directory');
+	    } else {
+	        try {
+	            return fs.readFileSync(id, defaults.encoding);
+	        } catch (e) {}
+	    }
+	}
+
+
+	// 重写模板`include``语句实现方法，转换模板为绝对路径
+	template.utils.$include = function (filename, data, from) {
+	    
+	    from = path.dirname(from);
+	    filename = path.join(from, filename);
+	    
+	    return template.renderFile(filename, data);
+	}
+
+
+	// express support
+	template.__express = function (file, options, fn) {
+
+	    if (typeof options === 'function') {
+	        fn = options;
+	        options = {};
+	    }
+
+
+		if (!rExtname) {
+			// 去掉 express 传入的路径
+			rExtname = new RegExp((defaults.extname + '$').replace(/\./g, '\\.'));
+		}
+
+
+	    file = file.replace(rExtname, '');
+
+	    options.filename = file;
+	    fn(null, template.renderFile(file, options));
+	};
+
+
+	return template;
+}
+},{"fs":4,"path":5}],3:[function(require,module,exports){
+/*!
+ * artTemplate[NodeJS]
+ * https://github.com/aui/artTemplate
+ * Released under the MIT, BSD, and GPL Licenses
+ */
+
+var node = require('./_node.js');
+var template = require('../dist/template-debug.js');
+module.exports = node(template);
+},{"../dist/template-debug.js":1,"./_node.js":2}],4:[function(require,module,exports){
+
+},{}],5:[function(require,module,exports){
 (function (process){
 // Copyright Joyent, Inc. and other Node contributors.
 //
@@ -228,7 +1066,7 @@ var substr = 'ab'.substr(-1) === 'b'
 ;
 
 }).call(this,require('_process'))
-},{"_process":3}],3:[function(require,module,exports){
+},{"_process":6}],6:[function(require,module,exports){
 // shim for using process in browser
 
 var process = module.exports = {};
@@ -321,7 +1159,7 @@ process.chdir = function (dir) {
 };
 process.umask = function() { return 0; };
 
-},{}],4:[function(require,module,exports){
+},{}],7:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -388,7 +1226,7 @@ exports['default'] = inst;
 module.exports = exports['default'];
 
 
-},{"./handlebars.runtime":5,"./handlebars/compiler/ast":7,"./handlebars/compiler/base":8,"./handlebars/compiler/compiler":10,"./handlebars/compiler/javascript-compiler":12,"./handlebars/compiler/visitor":15,"./handlebars/no-conflict":29}],5:[function(require,module,exports){
+},{"./handlebars.runtime":8,"./handlebars/compiler/ast":10,"./handlebars/compiler/base":11,"./handlebars/compiler/compiler":13,"./handlebars/compiler/javascript-compiler":15,"./handlebars/compiler/visitor":18,"./handlebars/no-conflict":32}],8:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -457,7 +1295,7 @@ exports['default'] = inst;
 module.exports = exports['default'];
 
 
-},{"./handlebars/base":6,"./handlebars/exception":19,"./handlebars/no-conflict":29,"./handlebars/runtime":30,"./handlebars/safe-string":31,"./handlebars/utils":32}],6:[function(require,module,exports){
+},{"./handlebars/base":9,"./handlebars/exception":22,"./handlebars/no-conflict":32,"./handlebars/runtime":33,"./handlebars/safe-string":34,"./handlebars/utils":35}],9:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -563,7 +1401,7 @@ exports.createFrame = _utils.createFrame;
 exports.logger = _logger2['default'];
 
 
-},{"./decorators":17,"./exception":19,"./helpers":20,"./logger":28,"./utils":32}],7:[function(require,module,exports){
+},{"./decorators":20,"./exception":22,"./helpers":23,"./logger":31,"./utils":35}],10:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -596,7 +1434,7 @@ exports['default'] = AST;
 module.exports = exports['default'];
 
 
-},{}],8:[function(require,module,exports){
+},{}],11:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -646,7 +1484,7 @@ function parse(input, options) {
 }
 
 
-},{"../utils":32,"./helpers":11,"./parser":13,"./whitespace-control":16}],9:[function(require,module,exports){
+},{"../utils":35,"./helpers":14,"./parser":16,"./whitespace-control":19}],12:[function(require,module,exports){
 /* global define */
 'use strict';
 
@@ -814,7 +1652,7 @@ exports['default'] = CodeGen;
 module.exports = exports['default'];
 
 
-},{"../utils":32,"source-map":34}],10:[function(require,module,exports){
+},{"../utils":35,"source-map":37}],13:[function(require,module,exports){
 /* eslint-disable new-cap */
 
 'use strict';
@@ -1388,7 +2226,7 @@ function transformLiteralToPath(sexpr) {
 }
 
 
-},{"../exception":19,"../utils":32,"./ast":7}],11:[function(require,module,exports){
+},{"../exception":22,"../utils":35,"./ast":10}],14:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -1620,7 +2458,7 @@ function preparePartialBlock(open, program, close, locInfo) {
 }
 
 
-},{"../exception":19}],12:[function(require,module,exports){
+},{"../exception":22}],15:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -2748,7 +3586,7 @@ exports['default'] = JavaScriptCompiler;
 module.exports = exports['default'];
 
 
-},{"../base":6,"../exception":19,"../utils":32,"./code-gen":9}],13:[function(require,module,exports){
+},{"../base":9,"../exception":22,"../utils":35,"./code-gen":12}],16:[function(require,module,exports){
 /* istanbul ignore next */
 /* Jison generated parser */
 "use strict";
@@ -3488,7 +4326,7 @@ var handlebars = (function () {
 exports['default'] = handlebars;
 
 
-},{}],14:[function(require,module,exports){
+},{}],17:[function(require,module,exports){
 /* eslint-disable new-cap */
 'use strict';
 
@@ -3676,7 +4514,7 @@ PrintVisitor.prototype.HashPair = function (pair) {
 /* eslint-enable new-cap */
 
 
-},{"./visitor":15}],15:[function(require,module,exports){
+},{"./visitor":18}],18:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -3818,7 +4656,7 @@ exports['default'] = Visitor;
 module.exports = exports['default'];
 
 
-},{"../exception":19}],16:[function(require,module,exports){
+},{"../exception":22}],19:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4041,7 +4879,7 @@ exports['default'] = WhitespaceControl;
 module.exports = exports['default'];
 
 
-},{"./visitor":15}],17:[function(require,module,exports){
+},{"./visitor":18}],20:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4059,7 +4897,7 @@ function registerDefaultDecorators(instance) {
 }
 
 
-},{"./decorators/inline":18}],18:[function(require,module,exports){
+},{"./decorators/inline":21}],21:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4090,7 +4928,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":32}],19:[function(require,module,exports){
+},{"../utils":35}],22:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4132,7 +4970,7 @@ exports['default'] = Exception;
 module.exports = exports['default'];
 
 
-},{}],20:[function(require,module,exports){
+},{}],23:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4180,7 +5018,7 @@ function registerDefaultHelpers(instance) {
 }
 
 
-},{"./helpers/block-helper-missing":21,"./helpers/each":22,"./helpers/helper-missing":23,"./helpers/if":24,"./helpers/log":25,"./helpers/lookup":26,"./helpers/with":27}],21:[function(require,module,exports){
+},{"./helpers/block-helper-missing":24,"./helpers/each":25,"./helpers/helper-missing":26,"./helpers/if":27,"./helpers/log":28,"./helpers/lookup":29,"./helpers/with":30}],24:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4221,7 +5059,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":32}],22:[function(require,module,exports){
+},{"../utils":35}],25:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4317,7 +5155,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../exception":19,"../utils":32}],23:[function(require,module,exports){
+},{"../exception":22,"../utils":35}],26:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4344,7 +5182,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../exception":19}],24:[function(require,module,exports){
+},{"../exception":22}],27:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4375,7 +5213,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":32}],25:[function(require,module,exports){
+},{"../utils":35}],28:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4403,7 +5241,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{}],26:[function(require,module,exports){
+},{}],29:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4417,7 +5255,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{}],27:[function(require,module,exports){
+},{}],30:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4452,7 +5290,7 @@ exports['default'] = function (instance) {
 module.exports = exports['default'];
 
 
-},{"../utils":32}],28:[function(require,module,exports){
+},{"../utils":35}],31:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4501,7 +5339,7 @@ exports['default'] = logger;
 module.exports = exports['default'];
 
 
-},{"./utils":32}],29:[function(require,module,exports){
+},{"./utils":35}],32:[function(require,module,exports){
 (function (global){
 /* global window */
 'use strict';
@@ -4524,7 +5362,7 @@ module.exports = exports['default'];
 
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],30:[function(require,module,exports){
+},{}],33:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4818,7 +5656,7 @@ function executeDecorators(fn, prog, container, depths, data, blockParams) {
 }
 
 
-},{"./base":6,"./exception":19,"./utils":32}],31:[function(require,module,exports){
+},{"./base":9,"./exception":22,"./utils":35}],34:[function(require,module,exports){
 // Build out our basic SafeString type
 'use strict';
 
@@ -4835,7 +5673,7 @@ exports['default'] = SafeString;
 module.exports = exports['default'];
 
 
-},{}],32:[function(require,module,exports){
+},{}],35:[function(require,module,exports){
 'use strict';
 
 exports.__esModule = true;
@@ -4961,7 +5799,7 @@ function appendContextPath(contextPath, id) {
 }
 
 
-},{}],33:[function(require,module,exports){
+},{}],36:[function(require,module,exports){
 // USAGE:
 // var handlebars = require('handlebars');
 /* eslint-disable no-var */
@@ -4988,7 +5826,7 @@ if (typeof require !== 'undefined' && require.extensions) {
   require.extensions['.hbs'] = extension;
 }
 
-},{"../dist/cjs/handlebars":4,"../dist/cjs/handlebars/compiler/printer":14,"fs":1}],34:[function(require,module,exports){
+},{"../dist/cjs/handlebars":7,"../dist/cjs/handlebars/compiler/printer":17,"fs":4}],37:[function(require,module,exports){
 /*
  * Copyright 2009-2011 Mozilla Foundation and contributors
  * Licensed under the New BSD license. See LICENSE.txt or:
@@ -4998,7 +5836,7 @@ exports.SourceMapGenerator = require('./source-map/source-map-generator').Source
 exports.SourceMapConsumer = require('./source-map/source-map-consumer').SourceMapConsumer;
 exports.SourceNode = require('./source-map/source-node').SourceNode;
 
-},{"./source-map/source-map-consumer":41,"./source-map/source-map-generator":42,"./source-map/source-node":43}],35:[function(require,module,exports){
+},{"./source-map/source-map-consumer":44,"./source-map/source-map-generator":45,"./source-map/source-node":46}],38:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -5107,7 +5945,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./util":44,"amdefine":45}],36:[function(require,module,exports){
+},{"./util":47,"amdefine":48}],39:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -5255,7 +6093,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./base64":37,"amdefine":45}],37:[function(require,module,exports){
+},{"./base64":40,"amdefine":48}],40:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -5330,7 +6168,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":45}],38:[function(require,module,exports){
+},{"amdefine":48}],41:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -5449,7 +6287,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":45}],39:[function(require,module,exports){
+},{"amdefine":48}],42:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2014 Mozilla Foundation and contributors
@@ -5537,7 +6375,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./util":44,"amdefine":45}],40:[function(require,module,exports){
+},{"./util":47,"amdefine":48}],43:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -5659,7 +6497,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":45}],41:[function(require,module,exports){
+},{"amdefine":48}],44:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -6738,7 +7576,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./array-set":35,"./base64-vlq":36,"./binary-search":38,"./quick-sort":40,"./util":44,"amdefine":45}],42:[function(require,module,exports){
+},{"./array-set":38,"./base64-vlq":39,"./binary-search":41,"./quick-sort":43,"./util":47,"amdefine":48}],45:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -7139,7 +7977,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./array-set":35,"./base64-vlq":36,"./mapping-list":39,"./util":44,"amdefine":45}],43:[function(require,module,exports){
+},{"./array-set":38,"./base64-vlq":39,"./mapping-list":42,"./util":47,"amdefine":48}],46:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -7555,7 +8393,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"./source-map-generator":42,"./util":44,"amdefine":45}],44:[function(require,module,exports){
+},{"./source-map-generator":45,"./util":47,"amdefine":48}],47:[function(require,module,exports){
 /* -*- Mode: js; js-indent-level: 2; -*- */
 /*
  * Copyright 2011 Mozilla Foundation and contributors
@@ -7927,7 +8765,7 @@ define(function (require, exports, module) {
 
 });
 
-},{"amdefine":45}],45:[function(require,module,exports){
+},{"amdefine":48}],48:[function(require,module,exports){
 (function (process,__filename){
 /** vim: et:ts=4:sw=4:sts=4
  * @license amdefine 1.0.0 Copyright (c) 2011-2015, The Dojo Foundation All Rights Reserved.
@@ -8232,7 +9070,7 @@ function amdefine(module, requireFn) {
 module.exports = amdefine;
 
 }).call(this,require('_process'),"/node_modules/handlebars/node_modules/source-map/node_modules/amdefine/amdefine.js")
-},{"_process":3,"path":2}],46:[function(require,module,exports){
+},{"_process":6,"path":5}],49:[function(require,module,exports){
 (function (global){
 /**
  * @license
@@ -20587,32 +21425,4038 @@ module.exports = amdefine;
 }.call(this));
 
 }).call(this,typeof global !== "undefined" ? global : typeof self !== "undefined" ? self : typeof window !== "undefined" ? window : {})
-},{}],47:[function(require,module,exports){
-var elem = document.querySelector('.browserify');
+},{}],50:[function(require,module,exports){
+module.exports = require('./lib/swig');
+
+},{"./lib/swig":58}],51:[function(require,module,exports){
+var utils = require('./utils');
+
+var _months = {
+    full: ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'],
+    abbr: ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  },
+  _days = {
+    full: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+    abbr: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+    alt: {'-1': 'Yesterday', 0: 'Today', 1: 'Tomorrow'}
+  };
+
+/*
+DateZ is licensed under the MIT License:
+Copyright (c) 2011 Tomo Universalis (http://tomouniversalis.com)
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+*/
+exports.tzOffset = 0;
+exports.DateZ = function () {
+  var members = {
+      'default': ['getUTCDate', 'getUTCDay', 'getUTCFullYear', 'getUTCHours', 'getUTCMilliseconds', 'getUTCMinutes', 'getUTCMonth', 'getUTCSeconds', 'toISOString', 'toGMTString', 'toUTCString', 'valueOf', 'getTime'],
+      z: ['getDate', 'getDay', 'getFullYear', 'getHours', 'getMilliseconds', 'getMinutes', 'getMonth', 'getSeconds', 'getYear', 'toDateString', 'toLocaleDateString', 'toLocaleTimeString']
+    },
+    d = this;
+
+  d.date = d.dateZ = (arguments.length > 1) ? new Date(Date.UTC.apply(Date, arguments) + ((new Date()).getTimezoneOffset() * 60000)) : (arguments.length === 1) ? new Date(new Date(arguments['0'])) : new Date();
+
+  d.timezoneOffset = d.dateZ.getTimezoneOffset();
+
+  utils.each(members.z, function (name) {
+    d[name] = function () {
+      return d.dateZ[name]();
+    };
+  });
+  utils.each(members['default'], function (name) {
+    d[name] = function () {
+      return d.date[name]();
+    };
+  });
+
+  this.setTimezoneOffset(exports.tzOffset);
+};
+exports.DateZ.prototype = {
+  getTimezoneOffset: function () {
+    return this.timezoneOffset;
+  },
+  setTimezoneOffset: function (offset) {
+    this.timezoneOffset = offset;
+    this.dateZ = new Date(this.date.getTime() + this.date.getTimezoneOffset() * 60000 - this.timezoneOffset * 60000);
+    return this;
+  }
+};
+
+// Day
+exports.d = function (input) {
+  return (input.getDate() < 10 ? '0' : '') + input.getDate();
+};
+exports.D = function (input) {
+  return _days.abbr[input.getDay()];
+};
+exports.j = function (input) {
+  return input.getDate();
+};
+exports.l = function (input) {
+  return _days.full[input.getDay()];
+};
+exports.N = function (input) {
+  var d = input.getDay();
+  return (d >= 1) ? d : 7;
+};
+exports.S = function (input) {
+  var d = input.getDate();
+  return (d % 10 === 1 && d !== 11 ? 'st' : (d % 10 === 2 && d !== 12 ? 'nd' : (d % 10 === 3 && d !== 13 ? 'rd' : 'th')));
+};
+exports.w = function (input) {
+  return input.getDay();
+};
+exports.z = function (input, offset, abbr) {
+  var year = input.getFullYear(),
+    e = new exports.DateZ(year, input.getMonth(), input.getDate(), 12, 0, 0),
+    d = new exports.DateZ(year, 0, 1, 12, 0, 0);
+
+  e.setTimezoneOffset(offset, abbr);
+  d.setTimezoneOffset(offset, abbr);
+  return Math.round((e - d) / 86400000);
+};
+
+// Week
+exports.W = function (input) {
+  var target = new Date(input.valueOf()),
+    dayNr = (input.getDay() + 6) % 7,
+    fThurs;
+
+  target.setDate(target.getDate() - dayNr + 3);
+  fThurs = target.valueOf();
+  target.setMonth(0, 1);
+  if (target.getDay() !== 4) {
+    target.setMonth(0, 1 + ((4 - target.getDay()) + 7) % 7);
+  }
+
+  return 1 + Math.ceil((fThurs - target) / 604800000);
+};
+
+// Month
+exports.F = function (input) {
+  return _months.full[input.getMonth()];
+};
+exports.m = function (input) {
+  return (input.getMonth() < 9 ? '0' : '') + (input.getMonth() + 1);
+};
+exports.M = function (input) {
+  return _months.abbr[input.getMonth()];
+};
+exports.n = function (input) {
+  return input.getMonth() + 1;
+};
+exports.t = function (input) {
+  return 32 - (new Date(input.getFullYear(), input.getMonth(), 32).getDate());
+};
+
+// Year
+exports.L = function (input) {
+  return new Date(input.getFullYear(), 1, 29).getDate() === 29;
+};
+exports.o = function (input) {
+  var target = new Date(input.valueOf());
+  target.setDate(target.getDate() - ((input.getDay() + 6) % 7) + 3);
+  return target.getFullYear();
+};
+exports.Y = function (input) {
+  return input.getFullYear();
+};
+exports.y = function (input) {
+  return (input.getFullYear().toString()).substr(2);
+};
+
+// Time
+exports.a = function (input) {
+  return input.getHours() < 12 ? 'am' : 'pm';
+};
+exports.A = function (input) {
+  return input.getHours() < 12 ? 'AM' : 'PM';
+};
+exports.B = function (input) {
+  var hours = input.getUTCHours(), beats;
+  hours = (hours === 23) ? 0 : hours + 1;
+  beats = Math.abs(((((hours * 60) + input.getUTCMinutes()) * 60) + input.getUTCSeconds()) / 86.4).toFixed(0);
+  return ('000'.concat(beats).slice(beats.length));
+};
+exports.g = function (input) {
+  var h = input.getHours();
+  return h === 0 ? 12 : (h > 12 ? h - 12 : h);
+};
+exports.G = function (input) {
+  return input.getHours();
+};
+exports.h = function (input) {
+  var h = input.getHours();
+  return ((h < 10 || (12 < h && 22 > h)) ? '0' : '') + ((h < 12) ? h : h - 12);
+};
+exports.H = function (input) {
+  var h = input.getHours();
+  return (h < 10 ? '0' : '') + h;
+};
+exports.i = function (input) {
+  var m = input.getMinutes();
+  return (m < 10 ? '0' : '') + m;
+};
+exports.s = function (input) {
+  var s = input.getSeconds();
+  return (s < 10 ? '0' : '') + s;
+};
+//u = function () { return ''; },
+
+// Timezone
+//e = function () { return ''; },
+//I = function () { return ''; },
+exports.O = function (input) {
+  var tz = input.getTimezoneOffset();
+  return (tz < 0 ? '-' : '+') + (tz / 60 < 10 ? '0' : '') + Math.abs((tz / 60)) + '00';
+};
+//T = function () { return ''; },
+exports.Z = function (input) {
+  return input.getTimezoneOffset() * 60;
+};
+
+// Full Date/Time
+exports.c = function (input) {
+  return input.toISOString();
+};
+exports.r = function (input) {
+  return input.toUTCString();
+};
+exports.U = function (input) {
+  return input.getTime() / 1000;
+};
+
+},{"./utils":75}],52:[function(require,module,exports){
+var utils = require('./utils'),
+  dateFormatter = require('./dateformatter');
+
+/**
+ * Helper method to recursively run a filter across an object/array and apply it to all of the object/array's values.
+ * @param  {*} input
+ * @return {*}
+ * @private
+ */
+function iterateFilter(input) {
+  var self = this,
+    out = {};
+
+  if (utils.isArray(input)) {
+    return utils.map(input, function (value) {
+      return self.apply(null, arguments);
+    });
+  }
+
+  if (typeof input === 'object') {
+    utils.each(input, function (value, key) {
+      out[key] = self.apply(null, arguments);
+    });
+    return out;
+  }
+
+  return;
+}
+
+/**
+ * Backslash-escape characters that need to be escaped.
+ *
+ * @example
+ * {{ "\"quoted string\""|addslashes }}
+ * // => \"quoted string\"
+ *
+ * @param  {*}  input
+ * @return {*}        Backslash-escaped string.
+ */
+exports.addslashes = function (input) {
+  var out = iterateFilter.apply(exports.addslashes, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.replace(/\\/g, '\\\\').replace(/\'/g, "\\'").replace(/\"/g, '\\"');
+};
+
+/**
+ * Upper-case the first letter of the input and lower-case the rest.
+ *
+ * @example
+ * {{ "i like Burritos"|capitalize }}
+ * // => I like burritos
+ *
+ * @param  {*} input  If given an array or object, each string member will be run through the filter individually.
+ * @return {*}        Returns the same type as the input.
+ */
+exports.capitalize = function (input) {
+  var out = iterateFilter.apply(exports.capitalize, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.toString().charAt(0).toUpperCase() + input.toString().substr(1).toLowerCase();
+};
+
+/**
+ * Format a date or Date-compatible string.
+ *
+ * @example
+ * // now = new Date();
+ * {{ now|date('Y-m-d') }}
+ * // => 2013-08-14
+ * @example
+ * // now = new Date();
+ * {{ now|date('jS \o\f F') }}
+ * // => 4th of July
+ *
+ * @param  {?(string|date)}   input
+ * @param  {string}           format  PHP-style date format compatible string. Escape characters with <code>\</code> for string literals.
+ * @param  {number=}          offset  Timezone offset from GMT in minutes.
+ * @param  {string=}          abbr    Timezone abbreviation. Used for output only.
+ * @return {string}                   Formatted date string.
+ */
+exports.date = function (input, format, offset, abbr) {
+  var l = format.length,
+    date = new dateFormatter.DateZ(input),
+    cur,
+    i = 0,
+    out = '';
+
+  if (offset) {
+    date.setTimezoneOffset(offset, abbr);
+  }
+
+  for (i; i < l; i += 1) {
+    cur = format.charAt(i);
+    if (cur === '\\') {
+      i += 1;
+      out += (i < l) ? format.charAt(i) : cur;
+    } else if (dateFormatter.hasOwnProperty(cur)) {
+      out += dateFormatter[cur](date, offset, abbr);
+    } else {
+      out += cur;
+    }
+  }
+  return out;
+};
+
+/**
+ * If the input is `undefined`, `null`, or `false`, a default return value can be specified.
+ *
+ * @example
+ * {{ null_value|default('Tacos') }}
+ * // => Tacos
+ *
+ * @example
+ * {{ "Burritos"|default("Tacos") }}
+ * // => Burritos
+ *
+ * @param  {*}  input
+ * @param  {*}  def     Value to return if `input` is `undefined`, `null`, or `false`.
+ * @return {*}          `input` or `def` value.
+ */
+exports["default"] = function (input, def) {
+  return (typeof input !== 'undefined' && (input || typeof input === 'number')) ? input : def;
+};
+
+/**
+ * Force escape the output of the variable. Optionally use `e` as a shortcut filter name. This filter will be applied by default if autoescape is turned on.
+ *
+ * @example
+ * {{ "<blah>"|escape }}
+ * // => &lt;blah&gt;
+ *
+ * @example
+ * {{ "<blah>"|e("js") }}
+ * // => \u003Cblah\u003E
+ *
+ * @param  {*} input
+ * @param  {string} [type='html']   If you pass the string js in as the type, output will be escaped so that it is safe for JavaScript execution.
+ * @return {string}         Escaped string.
+ */
+exports.escape = function (input, type) {
+  var out = iterateFilter.apply(exports.escape, arguments),
+    inp = input,
+    i = 0,
+    code;
+
+  if (out !== undefined) {
+    return out;
+  }
+
+  if (typeof input !== 'string') {
+    return input;
+  }
+
+  out = '';
+
+  switch (type) {
+  case 'js':
+    inp = inp.replace(/\\/g, '\\u005C');
+    for (i; i < inp.length; i += 1) {
+      code = inp.charCodeAt(i);
+      if (code < 32) {
+        code = code.toString(16).toUpperCase();
+        code = (code.length < 2) ? '0' + code : code;
+        out += '\\u00' + code;
+      } else {
+        out += inp[i];
+      }
+    }
+    return out.replace(/&/g, '\\u0026')
+      .replace(/</g, '\\u003C')
+      .replace(/>/g, '\\u003E')
+      .replace(/\'/g, '\\u0027')
+      .replace(/"/g, '\\u0022')
+      .replace(/\=/g, '\\u003D')
+      .replace(/-/g, '\\u002D')
+      .replace(/;/g, '\\u003B');
+
+  default:
+    return inp.replace(/&(?!amp;|lt;|gt;|quot;|#39;)/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+};
+exports.e = exports.escape;
+
+/**
+ * Get the first item in an array or character in a string. All other objects will attempt to return the first value available.
+ *
+ * @example
+ * // my_arr = ['a', 'b', 'c']
+ * {{ my_arr|first }}
+ * // => a
+ *
+ * @example
+ * // my_val = 'Tacos'
+ * {{ my_val|first }}
+ * // T
+ *
+ * @param  {*} input
+ * @return {*}        The first item of the array or first character of the string input.
+ */
+exports.first = function (input) {
+  if (typeof input === 'object' && !utils.isArray(input)) {
+    var keys = utils.keys(input);
+    return input[keys[0]];
+  }
+
+  if (typeof input === 'string') {
+    return input.substr(0, 1);
+  }
+
+  return input[0];
+};
+
+/**
+ * Group an array of objects by a common key. If an array is not provided, the input value will be returned untouched.
+ *
+ * @example
+ * // people = [{ age: 23, name: 'Paul' }, { age: 26, name: 'Jane' }, { age: 23, name: 'Jim' }];
+ * {% for agegroup in people|groupBy('age') %}
+ *   <h2>{{ loop.key }}</h2>
+ *   <ul>
+ *     {% for person in agegroup %}
+ *     <li>{{ person.name }}</li>
+ *     {% endfor %}
+ *   </ul>
+ * {% endfor %}
+ *
+ * @param  {*}      input Input object.
+ * @param  {string} key   Key to group by.
+ * @return {object}       Grouped arrays by given key.
+ */
+exports.groupBy = function (input, key) {
+  if (!utils.isArray(input)) {
+    return input;
+  }
+
+  var out = {};
+
+  utils.each(input, function (value) {
+    if (!value.hasOwnProperty(key)) {
+      return;
+    }
+
+    var keyname = value[key],
+      newVal = utils.extend({}, value);
+    delete value[key];
+
+    if (!out[keyname]) {
+      out[keyname] = [];
+    }
+
+    out[keyname].push(value);
+  });
+
+  return out;
+};
+
+/**
+ * Join the input with a string.
+ *
+ * @example
+ * // my_array = ['foo', 'bar', 'baz']
+ * {{ my_array|join(', ') }}
+ * // => foo, bar, baz
+ *
+ * @example
+ * // my_key_object = { a: 'foo', b: 'bar', c: 'baz' }
+ * {{ my_key_object|join(' and ') }}
+ * // => foo and bar and baz
+ *
+ * @param  {*}  input
+ * @param  {string} glue    String value to join items together.
+ * @return {string}
+ */
+exports.join = function (input, glue) {
+  if (utils.isArray(input)) {
+    return input.join(glue);
+  }
+
+  if (typeof input === 'object') {
+    var out = [];
+    utils.each(input, function (value) {
+      out.push(value);
+    });
+    return out.join(glue);
+  }
+  return input;
+};
+
+/**
+ * Return a string representation of an JavaScript object.
+ *
+ * Backwards compatible with swig@0.x.x using `json_encode`.
+ *
+ * @example
+ * // val = { a: 'b' }
+ * {{ val|json }}
+ * // => {"a":"b"}
+ *
+ * @example
+ * // val = { a: 'b' }
+ * {{ val|json(4) }}
+ * // => {
+ * //        "a": "b"
+ * //    }
+ *
+ * @param  {*}    input
+ * @param  {number}  [indent]  Number of spaces to indent for pretty-formatting.
+ * @return {string}           A valid JSON string.
+ */
+exports.json = function (input, indent) {
+  return JSON.stringify(input, null, indent || 0);
+};
+exports.json_encode = exports.json;
+
+/**
+ * Get the last item in an array or character in a string. All other objects will attempt to return the last value available.
+ *
+ * @example
+ * // my_arr = ['a', 'b', 'c']
+ * {{ my_arr|last }}
+ * // => c
+ *
+ * @example
+ * // my_val = 'Tacos'
+ * {{ my_val|last }}
+ * // s
+ *
+ * @param  {*} input
+ * @return {*}          The last item of the array or last character of the string.input.
+ */
+exports.last = function (input) {
+  if (typeof input === 'object' && !utils.isArray(input)) {
+    var keys = utils.keys(input);
+    return input[keys[keys.length - 1]];
+  }
+
+  if (typeof input === 'string') {
+    return input.charAt(input.length - 1);
+  }
+
+  return input[input.length - 1];
+};
+
+/**
+ * Return the input in all lowercase letters.
+ *
+ * @example
+ * {{ "FOOBAR"|lower }}
+ * // => foobar
+ *
+ * @example
+ * // myObj = { a: 'FOO', b: 'BAR' }
+ * {{ myObj|lower|join('') }}
+ * // => foobar
+ *
+ * @param  {*}  input
+ * @return {*}          Returns the same type as the input.
+ */
+exports.lower = function (input) {
+  var out = iterateFilter.apply(exports.lower, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.toString().toLowerCase();
+};
+
+/**
+ * Deprecated in favor of <a href="#safe">safe</a>.
+ */
+exports.raw = function (input) {
+  return exports.safe(input);
+};
+exports.raw.safe = true;
+
+/**
+ * Returns a new string with the matched search pattern replaced by the given replacement string. Uses JavaScript's built-in String.replace() method.
+ *
+ * @example
+ * // my_var = 'foobar';
+ * {{ my_var|replace('o', 'e', 'g') }}
+ * // => feebar
+ *
+ * @example
+ * // my_var = "farfegnugen";
+ * {{ my_var|replace('^f', 'p') }}
+ * // => parfegnugen
+ *
+ * @example
+ * // my_var = 'a1b2c3';
+ * {{ my_var|replace('\w', '0', 'g') }}
+ * // => 010203
+ *
+ * @param  {string} input
+ * @param  {string} search      String or pattern to replace from the input.
+ * @param  {string} replacement String to replace matched pattern.
+ * @param  {string} [flags]      Regular Expression flags. 'g': global match, 'i': ignore case, 'm': match over multiple lines
+ * @return {string}             Replaced string.
+ */
+exports.replace = function (input, search, replacement, flags) {
+  var r = new RegExp(search, flags);
+  return input.replace(r, replacement);
+};
+
+/**
+ * Reverse sort the input. This is an alias for <code data-language="swig">{{ input|sort(true) }}</code>.
+ *
+ * @example
+ * // val = [1, 2, 3];
+ * {{ val|reverse }}
+ * // => 3,2,1
+ *
+ * @param  {array}  input
+ * @return {array}        Reversed array. The original input object is returned if it was not an array.
+ */
+exports.reverse = function (input) {
+  return exports.sort(input, true);
+};
+
+/**
+ * Forces the input to not be auto-escaped. Use this only on content that you know is safe to be rendered on your page.
+ *
+ * @example
+ * // my_var = "<p>Stuff</p>";
+ * {{ my_var|safe }}
+ * // => <p>Stuff</p>
+ *
+ * @param  {*}  input
+ * @return {*}          The input exactly how it was given, regardless of autoescaping status.
+ */
+exports.safe = function (input) {
+  // This is a magic filter. Its logic is hard-coded into Swig's parser.
+  return input;
+};
+exports.safe.safe = true;
+
+/**
+ * Sort the input in an ascending direction.
+ * If given an object, will return the keys as a sorted array.
+ * If given a string, each character will be sorted individually.
+ *
+ * @example
+ * // val = [2, 6, 4];
+ * {{ val|sort }}
+ * // => 2,4,6
+ *
+ * @example
+ * // val = 'zaq';
+ * {{ val|sort }}
+ * // => aqz
+ *
+ * @example
+ * // val = { bar: 1, foo: 2 }
+ * {{ val|sort(true) }}
+ * // => foo,bar
+ *
+ * @param  {*} input
+ * @param {boolean} [reverse=false] Output is given reverse-sorted if true.
+ * @return {*}        Sorted array;
+ */
+exports.sort = function (input, reverse) {
+  var out;
+  if (utils.isArray(input)) {
+    out = input.sort();
+  } else {
+    switch (typeof input) {
+    case 'object':
+      out = utils.keys(input).sort();
+      break;
+    case 'string':
+      out = input.split('');
+      if (reverse) {
+        return out.reverse().join('');
+      }
+      return out.sort().join('');
+    }
+  }
+
+  if (out && reverse) {
+    return out.reverse();
+  }
+
+  return out || input;
+};
+
+/**
+ * Strip HTML tags.
+ *
+ * @example
+ * // stuff = '<p>foobar</p>';
+ * {{ stuff|striptags }}
+ * // => foobar
+ *
+ * @param  {*}  input
+ * @return {*}        Returns the same object as the input, but with all string values stripped of tags.
+ */
+exports.striptags = function (input) {
+  var out = iterateFilter.apply(exports.striptags, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.toString().replace(/(<([^>]+)>)/ig, '');
+};
+
+/**
+ * Capitalizes every word given and lower-cases all other letters.
+ *
+ * @example
+ * // my_str = 'this is soMe text';
+ * {{ my_str|title }}
+ * // => This Is Some Text
+ *
+ * @example
+ * // my_arr = ['hi', 'this', 'is', 'an', 'array'];
+ * {{ my_arr|title|join(' ') }}
+ * // => Hi This Is An Array
+ *
+ * @param  {*}  input
+ * @return {*}        Returns the same object as the input, but with all words in strings title-cased.
+ */
+exports.title = function (input) {
+  var out = iterateFilter.apply(exports.title, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.toString().replace(/\w\S*/g, function (str) {
+    return str.charAt(0).toUpperCase() + str.substr(1).toLowerCase();
+  });
+};
+
+/**
+ * Remove all duplicate items from an array.
+ *
+ * @example
+ * // my_arr = [1, 2, 3, 4, 4, 3, 2, 1];
+ * {{ my_arr|uniq|join(',') }}
+ * // => 1,2,3,4
+ *
+ * @param  {array}  input
+ * @return {array}        Array with unique items. If input was not an array, the original item is returned untouched.
+ */
+exports.uniq = function (input) {
+  var result;
+
+  if (!input || !utils.isArray(input)) {
+    return '';
+  }
+
+  result = [];
+  utils.each(input, function (v) {
+    if (result.indexOf(v) === -1) {
+      result.push(v);
+    }
+  });
+  return result;
+};
+
+/**
+ * Convert the input to all uppercase letters. If an object or array is provided, all values will be uppercased.
+ *
+ * @example
+ * // my_str = 'tacos';
+ * {{ my_str|upper }}
+ * // => TACOS
+ *
+ * @example
+ * // my_arr = ['tacos', 'burritos'];
+ * {{ my_arr|upper|join(' & ') }}
+ * // => TACOS & BURRITOS
+ *
+ * @param  {*}  input
+ * @return {*}        Returns the same type as the input, with all strings upper-cased.
+ */
+exports.upper = function (input) {
+  var out = iterateFilter.apply(exports.upper, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+
+  return input.toString().toUpperCase();
+};
+
+/**
+ * URL-encode a string. If an object or array is passed, all values will be URL-encoded.
+ *
+ * @example
+ * // my_str = 'param=1&anotherParam=2';
+ * {{ my_str|url_encode }}
+ * // => param%3D1%26anotherParam%3D2
+ *
+ * @param  {*} input
+ * @return {*}       URL-encoded string.
+ */
+exports.url_encode = function (input) {
+  var out = iterateFilter.apply(exports.url_encode, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+  return encodeURIComponent(input);
+};
+
+/**
+ * URL-decode a string. If an object or array is passed, all values will be URL-decoded.
+ *
+ * @example
+ * // my_str = 'param%3D1%26anotherParam%3D2';
+ * {{ my_str|url_decode }}
+ * // => param=1&anotherParam=2
+ *
+ * @param  {*} input
+ * @return {*}       URL-decoded string.
+ */
+exports.url_decode = function (input) {
+  var out = iterateFilter.apply(exports.url_decode, arguments);
+  if (out !== undefined) {
+    return out;
+  }
+  return decodeURIComponent(input);
+};
+
+},{"./dateformatter":51,"./utils":75}],53:[function(require,module,exports){
+var utils = require('./utils');
+
+/**
+ * A lexer token.
+ * @typedef {object} LexerToken
+ * @property {string} match  The string that was matched.
+ * @property {number} type   Lexer type enum.
+ * @property {number} length Length of the original string processed.
+ */
+
+/**
+ * Enum for token types.
+ * @readonly
+ * @enum {number}
+ */
+var TYPES = {
+    /** Whitespace */
+    WHITESPACE: 0,
+    /** Plain string */
+    STRING: 1,
+    /** Variable filter */
+    FILTER: 2,
+    /** Empty variable filter */
+    FILTEREMPTY: 3,
+    /** Function */
+    FUNCTION: 4,
+    /** Function with no arguments */
+    FUNCTIONEMPTY: 5,
+    /** Open parenthesis */
+    PARENOPEN: 6,
+    /** Close parenthesis */
+    PARENCLOSE: 7,
+    /** Comma */
+    COMMA: 8,
+    /** Variable */
+    VAR: 9,
+    /** Number */
+    NUMBER: 10,
+    /** Math operator */
+    OPERATOR: 11,
+    /** Open square bracket */
+    BRACKETOPEN: 12,
+    /** Close square bracket */
+    BRACKETCLOSE: 13,
+    /** Key on an object using dot-notation */
+    DOTKEY: 14,
+    /** Start of an array */
+    ARRAYOPEN: 15,
+    /** End of an array
+     * Currently unused
+    ARRAYCLOSE: 16, */
+    /** Open curly brace */
+    CURLYOPEN: 17,
+    /** Close curly brace */
+    CURLYCLOSE: 18,
+    /** Colon (:) */
+    COLON: 19,
+    /** JavaScript-valid comparator */
+    COMPARATOR: 20,
+    /** Boolean logic */
+    LOGIC: 21,
+    /** Boolean logic "not" */
+    NOT: 22,
+    /** true or false */
+    BOOL: 23,
+    /** Variable assignment */
+    ASSIGNMENT: 24,
+    /** Start of a method */
+    METHODOPEN: 25,
+    /** End of a method
+     * Currently unused
+    METHODEND: 26, */
+    /** Unknown type */
+    UNKNOWN: 100
+  },
+  rules = [
+    {
+      type: TYPES.WHITESPACE,
+      regex: [
+        /^\s+/
+      ]
+    },
+    {
+      type: TYPES.STRING,
+      regex: [
+        /^""/,
+        /^".*?[^\\]"/,
+        /^''/,
+        /^'.*?[^\\]'/
+      ]
+    },
+    {
+      type: TYPES.FILTER,
+      regex: [
+        /^\|\s*(\w+)\(/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.FILTEREMPTY,
+      regex: [
+        /^\|\s*(\w+)/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.FUNCTIONEMPTY,
+      regex: [
+        /^\s*(\w+)\(\)/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.FUNCTION,
+      regex: [
+        /^\s*(\w+)\(/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.PARENOPEN,
+      regex: [
+        /^\(/
+      ]
+    },
+    {
+      type: TYPES.PARENCLOSE,
+      regex: [
+        /^\)/
+      ]
+    },
+    {
+      type: TYPES.COMMA,
+      regex: [
+        /^,/
+      ]
+    },
+    {
+      type: TYPES.LOGIC,
+      regex: [
+        /^(&&|\|\|)\s*/,
+        /^(and|or)\s+/
+      ],
+      idx: 1,
+      replace: {
+        'and': '&&',
+        'or': '||'
+      }
+    },
+    {
+      type: TYPES.COMPARATOR,
+      regex: [
+        /^(===|==|\!==|\!=|<=|<|>=|>|in\s|gte\s|gt\s|lte\s|lt\s)\s*/
+      ],
+      idx: 1,
+      replace: {
+        'gte': '>=',
+        'gt': '>',
+        'lte': '<=',
+        'lt': '<'
+      }
+    },
+    {
+      type: TYPES.ASSIGNMENT,
+      regex: [
+        /^(=|\+=|-=|\*=|\/=)/
+      ]
+    },
+    {
+      type: TYPES.NOT,
+      regex: [
+        /^\!\s*/,
+        /^not\s+/
+      ],
+      replace: {
+        'not': '!'
+      }
+    },
+    {
+      type: TYPES.BOOL,
+      regex: [
+        /^(true|false)\s+/,
+        /^(true|false)$/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.VAR,
+      regex: [
+        /^[a-zA-Z_$]\w*((\.\$?\w*)+)?/,
+        /^[a-zA-Z_$]\w*/
+      ]
+    },
+    {
+      type: TYPES.BRACKETOPEN,
+      regex: [
+        /^\[/
+      ]
+    },
+    {
+      type: TYPES.BRACKETCLOSE,
+      regex: [
+        /^\]/
+      ]
+    },
+    {
+      type: TYPES.CURLYOPEN,
+      regex: [
+        /^\{/
+      ]
+    },
+    {
+      type: TYPES.COLON,
+      regex: [
+        /^\:/
+      ]
+    },
+    {
+      type: TYPES.CURLYCLOSE,
+      regex: [
+        /^\}/
+      ]
+    },
+    {
+      type: TYPES.DOTKEY,
+      regex: [
+        /^\.(\w+)/
+      ],
+      idx: 1
+    },
+    {
+      type: TYPES.NUMBER,
+      regex: [
+        /^[+\-]?\d+(\.\d+)?/
+      ]
+    },
+    {
+      type: TYPES.OPERATOR,
+      regex: [
+        /^(\+|\-|\/|\*|%)/
+      ]
+    }
+  ];
+
+exports.types = TYPES;
+
+/**
+ * Return the token type object for a single chunk of a string.
+ * @param  {string} str String chunk.
+ * @return {LexerToken}     Defined type, potentially stripped or replaced with more suitable content.
+ * @private
+ */
+function reader(str) {
+  var matched;
+
+  utils.some(rules, function (rule) {
+    return utils.some(rule.regex, function (regex) {
+      var match = str.match(regex),
+        normalized;
+
+      if (!match) {
+        return;
+      }
+
+      normalized = match[rule.idx || 0].replace(/\s*$/, '');
+      normalized = (rule.hasOwnProperty('replace') && rule.replace.hasOwnProperty(normalized)) ? rule.replace[normalized] : normalized;
+
+      matched = {
+        match: normalized,
+        type: rule.type,
+        length: match[0].length
+      };
+      return true;
+    });
+  });
+
+  if (!matched) {
+    matched = {
+      match: str,
+      type: TYPES.UNKNOWN,
+      length: str.length
+    };
+  }
+
+  return matched;
+}
+
+/**
+ * Read a string and break it into separate token types.
+ * @param  {string} str
+ * @return {Array.LexerToken}     Array of defined types, potentially stripped or replaced with more suitable content.
+ * @private
+ */
+exports.read = function (str) {
+  var offset = 0,
+    tokens = [],
+    substr,
+    match;
+  while (offset < str.length) {
+    substr = str.substring(offset);
+    match = reader(substr);
+    offset += match.length;
+    tokens.push(match);
+  }
+  return tokens;
+};
+
+},{"./utils":75}],54:[function(require,module,exports){
+(function (process){
+var fs = require('fs'),
+  path = require('path');
+
+/**
+ * Loads templates from the file system.
+ * @alias swig.loaders.fs
+ * @example
+ * swig.setDefaults({ loader: swig.loaders.fs() });
+ * @example
+ * // Load Templates from a specific directory (does not require using relative paths in your templates)
+ * swig.setDefaults({ loader: swig.loaders.fs(__dirname + '/templates' )});
+ * @param {string}   [basepath='']     Path to the templates as string. Assigning this value allows you to use semi-absolute paths to templates instead of relative paths.
+ * @param {string}   [encoding='utf8']   Template encoding
+ */
+module.exports = function (basepath, encoding) {
+  var ret = {};
+
+  encoding = encoding || 'utf8';
+  basepath = (basepath) ? path.normalize(basepath) : null;
+
+  /**
+   * Resolves <var>to</var> to an absolute path or unique identifier. This is used for building correct, normalized, and absolute paths to a given template.
+   * @alias resolve
+   * @param  {string} to        Non-absolute identifier or pathname to a file.
+   * @param  {string} [from]    If given, should attempt to find the <var>to</var> path in relation to this given, known path.
+   * @return {string}
+   */
+  ret.resolve = function (to, from) {
+    if (basepath) {
+      from = basepath;
+    } else {
+      from = (from) ? path.dirname(from) : process.cwd();
+    }
+    return path.resolve(from, to);
+  };
+
+  /**
+   * Loads a single template. Given a unique <var>identifier</var> found by the <var>resolve</var> method this should return the given template.
+   * @alias load
+   * @param  {string}   identifier  Unique identifier of a template (possibly an absolute path).
+   * @param  {function} [cb]        Asynchronous callback function. If not provided, this method should run synchronously.
+   * @return {string}               Template source string.
+   */
+  ret.load = function (identifier, cb) {
+    if (!fs || (cb && !fs.readFile) || !fs.readFileSync) {
+      throw new Error('Unable to find file ' + identifier + ' because there is no filesystem to read from.');
+    }
+
+    identifier = ret.resolve(identifier);
+
+    if (cb) {
+      fs.readFile(identifier, encoding, cb);
+      return;
+    }
+    return fs.readFileSync(identifier, encoding);
+  };
+
+  return ret;
+};
+
+}).call(this,require('_process'))
+},{"_process":6,"fs":4,"path":5}],55:[function(require,module,exports){
+/**
+ * @namespace TemplateLoader
+ * @description Swig is able to accept custom template loaders written by you, so that your templates can come from your favorite storage medium without needing to be part of the core library.
+ * A template loader consists of two methods: <var>resolve</var> and <var>load</var>. Each method is used internally by Swig to find and load the source of the template before attempting to parse and compile it.
+ * @example
+ * // A theoretical memcached loader
+ * var path = require('path'),
+ *   Memcached = require('memcached');
+ * function memcachedLoader(locations, options) {
+ *   var memcached = new Memcached(locations, options);
+ *   return {
+ *     resolve: function (to, from) {
+ *       return path.resolve(from, to);
+ *     },
+ *     load: function (identifier, cb) {
+ *       memcached.get(identifier, function (err, data) {
+ *         // if (!data) { load from filesystem; }
+ *         cb(err, data);
+ *       });
+ *     }
+ *   };
+ * };
+ * // Tell swig about the loader:
+ * swig.setDefaults({ loader: memcachedLoader(['192.168.0.2']) });
+ */
+
+/**
+ * @function
+ * @name resolve
+ * @memberof TemplateLoader
+ * @description
+ * Resolves <var>to</var> to an absolute path or unique identifier. This is used for building correct, normalized, and absolute paths to a given template.
+ * @param  {string} to        Non-absolute identifier or pathname to a file.
+ * @param  {string} [from]    If given, should attempt to find the <var>to</var> path in relation to this given, known path.
+ * @return {string}
+ */
+
+/**
+ * @function
+ * @name load
+ * @memberof TemplateLoader
+ * @description
+ * Loads a single template. Given a unique <var>identifier</var> found by the <var>resolve</var> method this should return the given template.
+ * @param  {string}   identifier  Unique identifier of a template (possibly an absolute path).
+ * @param  {function} [cb]        Asynchronous callback function. If not provided, this method should run synchronously.
+ * @return {string}               Template source string.
+ */
+
+/**
+ * @private
+ */
+exports.fs = require('./filesystem');
+exports.memory = require('./memory');
+
+},{"./filesystem":54,"./memory":56}],56:[function(require,module,exports){
+var path = require('path'),
+  utils = require('../utils');
+
+/**
+ * Loads templates from a provided object mapping.
+ * @alias swig.loaders.memory
+ * @example
+ * var templates = {
+ *   "layout": "{% block content %}{% endblock %}",
+ *   "home.html": "{% extends 'layout.html' %}{% block content %}...{% endblock %}"
+ * };
+ * swig.setDefaults({ loader: swig.loaders.memory(templates) });
+ *
+ * @param {object} mapping Hash object with template paths as keys and template sources as values.
+ * @param {string} [basepath] Path to the templates as string. Assigning this value allows you to use semi-absolute paths to templates instead of relative paths.
+ */
+module.exports = function (mapping, basepath) {
+  var ret = {};
+
+  basepath = (basepath) ? path.normalize(basepath) : null;
+
+  /**
+   * Resolves <var>to</var> to an absolute path or unique identifier. This is used for building correct, normalized, and absolute paths to a given template.
+   * @alias resolve
+   * @param  {string} to        Non-absolute identifier or pathname to a file.
+   * @param  {string} [from]    If given, should attempt to find the <var>to</var> path in relation to this given, known path.
+   * @return {string}
+   */
+  ret.resolve = function (to, from) {
+    if (basepath) {
+      from = basepath;
+    } else {
+      from = (from) ? path.dirname(from) : '/';
+    }
+    return path.resolve(from, to);
+  };
+
+  /**
+   * Loads a single template. Given a unique <var>identifier</var> found by the <var>resolve</var> method this should return the given template.
+   * @alias load
+   * @param  {string}   identifier  Unique identifier of a template (possibly an absolute path).
+   * @param  {function} [cb]        Asynchronous callback function. If not provided, this method should run synchronously.
+   * @return {string}               Template source string.
+   */
+  ret.load = function (pathname, cb) {
+    var src, paths;
+
+    paths = [pathname, pathname.replace(/^(\/|\\)/, '')];
+
+    src = mapping[paths[0]] || mapping[paths[1]];
+    if (!src) {
+      utils.throwError('Unable to find template "' + pathname + '".');
+    }
+
+    if (cb) {
+      cb(null, src);
+      return;
+    }
+    return src;
+  };
+
+  return ret;
+};
+
+},{"../utils":75,"path":5}],57:[function(require,module,exports){
+var utils = require('./utils'),
+  lexer = require('./lexer');
+
+var _t = lexer.types,
+  _reserved = ['break', 'case', 'catch', 'continue', 'debugger', 'default', 'delete', 'do', 'else', 'finally', 'for', 'function', 'if', 'in', 'instanceof', 'new', 'return', 'switch', 'this', 'throw', 'try', 'typeof', 'var', 'void', 'while', 'with'];
+
+
+/**
+ * Filters are simply functions that perform transformations on their first input argument.
+ * Filters are run at render time, so they may not directly modify the compiled template structure in any way.
+ * All of Swig's built-in filters are written in this same way. For more examples, reference the `filters.js` file in Swig's source.
+ *
+ * To disable auto-escaping on a custom filter, simply add a property to the filter method `safe = true;` and the output from this will not be escaped, no matter what the global settings are for Swig.
+ *
+ * @typedef {function} Filter
+ *
+ * @example
+ * // This filter will return 'bazbop' if the idx on the input is not 'foobar'
+ * swig.setFilter('foobar', function (input, idx) {
+ *   return input[idx] === 'foobar' ? input[idx] : 'bazbop';
+ * });
+ * // myvar = ['foo', 'bar', 'baz', 'bop'];
+ * // => {{ myvar|foobar(3) }}
+ * // Since myvar[3] !== 'foobar', we render:
+ * // => bazbop
+ *
+ * @example
+ * // This filter will disable auto-escaping on its output:
+ * function bazbop (input) { return input; }
+ * bazbop.safe = true;
+ * swig.setFilter('bazbop', bazbop);
+ * // => {{ "<p>"|bazbop }}
+ * // => <p>
+ *
+ * @param {*} input Input argument, automatically sent from Swig's built-in parser.
+ * @param {...*} [args] All other arguments are defined by the Filter author.
+ * @return {*}
+ */
+
+/*!
+ * Makes a string safe for a regular expression.
+ * @param  {string} str
+ * @return {string}
+ * @private
+ */
+function escapeRegExp(str) {
+  return str.replace(/[\-\/\\\^$*+?.()|\[\]{}]/g, '\\$&');
+}
+
+/**
+ * Parse strings of variables and tags into tokens for future compilation.
+ * @class
+ * @param {array}   tokens     Pre-split tokens read by the Lexer.
+ * @param {object}  filters    Keyed object of filters that may be applied to variables.
+ * @param {boolean} autoescape Whether or not this should be autoescaped.
+ * @param {number}  line       Beginning line number for the first token.
+ * @param {string}  [filename] Name of the file being parsed.
+ * @private
+ */
+function TokenParser(tokens, filters, autoescape, line, filename) {
+  this.out = [];
+  this.state = [];
+  this.filterApplyIdx = [];
+  this._parsers = {};
+  this.line = line;
+  this.filename = filename;
+  this.filters = filters;
+  this.escape = autoescape;
+
+  this.parse = function () {
+    var self = this;
+
+    if (self._parsers.start) {
+      self._parsers.start.call(self);
+    }
+    utils.each(tokens, function (token, i) {
+      var prevToken = tokens[i - 1];
+      self.isLast = (i === tokens.length - 1);
+      if (prevToken) {
+        while (prevToken.type === _t.WHITESPACE) {
+          i -= 1;
+          prevToken = tokens[i - 1];
+        }
+      }
+      self.prevToken = prevToken;
+      self.parseToken(token);
+    });
+    if (self._parsers.end) {
+      self._parsers.end.call(self);
+    }
+
+    if (self.escape) {
+      self.filterApplyIdx = [0];
+      if (typeof self.escape === 'string') {
+        self.parseToken({ type: _t.FILTER, match: 'e' });
+        self.parseToken({ type: _t.COMMA, match: ',' });
+        self.parseToken({ type: _t.STRING, match: String(autoescape) });
+        self.parseToken({ type: _t.PARENCLOSE, match: ')'});
+      } else {
+        self.parseToken({ type: _t.FILTEREMPTY, match: 'e' });
+      }
+    }
+
+    return self.out;
+  };
+}
+
+TokenParser.prototype = {
+  /**
+   * Set a custom method to be called when a token type is found.
+   *
+   * @example
+   * parser.on(types.STRING, function (token) {
+   *   this.out.push(token.match);
+   * });
+   * @example
+   * parser.on('start', function () {
+   *   this.out.push('something at the beginning of your args')
+   * });
+   * parser.on('end', function () {
+   *   this.out.push('something at the end of your args');
+   * });
+   *
+   * @param  {number}   type Token type ID. Found in the Lexer.
+   * @param  {Function} fn   Callback function. Return true to continue executing the default parsing function.
+   * @return {undefined}
+   */
+  on: function (type, fn) {
+    this._parsers[type] = fn;
+  },
+
+  /**
+   * Parse a single token.
+   * @param  {{match: string, type: number, line: number}} token Lexer token object.
+   * @return {undefined}
+   * @private
+   */
+  parseToken: function (token) {
+    var self = this,
+      fn = self._parsers[token.type] || self._parsers['*'],
+      match = token.match,
+      prevToken = self.prevToken,
+      prevTokenType = prevToken ? prevToken.type : null,
+      lastState = (self.state.length) ? self.state[self.state.length - 1] : null,
+      temp;
+
+    if (fn && typeof fn === 'function') {
+      if (!fn.call(this, token)) {
+        return;
+      }
+    }
+
+    if (lastState && prevToken &&
+        lastState === _t.FILTER &&
+        prevTokenType === _t.FILTER &&
+        token.type !== _t.PARENCLOSE &&
+        token.type !== _t.COMMA &&
+        token.type !== _t.OPERATOR &&
+        token.type !== _t.FILTER &&
+        token.type !== _t.FILTEREMPTY) {
+      self.out.push(', ');
+    }
+
+    if (lastState && lastState === _t.METHODOPEN) {
+      self.state.pop();
+      if (token.type !== _t.PARENCLOSE) {
+        self.out.push(', ');
+      }
+    }
+
+    switch (token.type) {
+    case _t.WHITESPACE:
+      break;
+
+    case _t.STRING:
+      self.filterApplyIdx.push(self.out.length);
+      self.out.push(match.replace(/\\/g, '\\\\'));
+      break;
+
+    case _t.NUMBER:
+    case _t.BOOL:
+      self.filterApplyIdx.push(self.out.length);
+      self.out.push(match);
+      break;
+
+    case _t.FILTER:
+      if (!self.filters.hasOwnProperty(match) || typeof self.filters[match] !== "function") {
+        utils.throwError('Invalid filter "' + match + '"', self.line, self.filename);
+      }
+      self.escape = self.filters[match].safe ? false : self.escape;
+      self.out.splice(self.filterApplyIdx[self.filterApplyIdx.length - 1], 0, '_filters["' + match + '"](');
+      self.state.push(token.type);
+      break;
+
+    case _t.FILTEREMPTY:
+      if (!self.filters.hasOwnProperty(match) || typeof self.filters[match] !== "function") {
+        utils.throwError('Invalid filter "' + match + '"', self.line, self.filename);
+      }
+      self.escape = self.filters[match].safe ? false : self.escape;
+      self.out.splice(self.filterApplyIdx[self.filterApplyIdx.length - 1], 0, '_filters["' + match + '"](');
+      self.out.push(')');
+      break;
+
+    case _t.FUNCTION:
+    case _t.FUNCTIONEMPTY:
+      self.out.push('((typeof _ctx.' + match + ' !== "undefined") ? _ctx.' + match +
+        ' : ((typeof ' + match + ' !== "undefined") ? ' + match +
+        ' : _fn))(');
+      self.escape = false;
+      if (token.type === _t.FUNCTIONEMPTY) {
+        self.out[self.out.length - 1] = self.out[self.out.length - 1] + ')';
+      } else {
+        self.state.push(token.type);
+      }
+      self.filterApplyIdx.push(self.out.length - 1);
+      break;
+
+    case _t.PARENOPEN:
+      self.state.push(token.type);
+      if (self.filterApplyIdx.length) {
+        self.out.splice(self.filterApplyIdx[self.filterApplyIdx.length - 1], 0, '(');
+        if (prevToken && prevTokenType === _t.VAR) {
+          temp = prevToken.match.split('.').slice(0, -1);
+          self.out.push(' || _fn).call(' + self.checkMatch(temp));
+          self.state.push(_t.METHODOPEN);
+          self.escape = false;
+        } else {
+          self.out.push(' || _fn)(');
+        }
+        self.filterApplyIdx.push(self.out.length - 3);
+      } else {
+        self.out.push('(');
+        self.filterApplyIdx.push(self.out.length - 1);
+      }
+      break;
+
+    case _t.PARENCLOSE:
+      temp = self.state.pop();
+      if (temp !== _t.PARENOPEN && temp !== _t.FUNCTION && temp !== _t.FILTER) {
+        utils.throwError('Mismatched nesting state', self.line, self.filename);
+      }
+      self.out.push(')');
+      // Once off the previous entry
+      self.filterApplyIdx.pop();
+      if (temp !== _t.FILTER) {
+        // Once for the open paren
+        self.filterApplyIdx.pop();
+      }
+      break;
+
+    case _t.COMMA:
+      if (lastState !== _t.FUNCTION &&
+          lastState !== _t.FILTER &&
+          lastState !== _t.ARRAYOPEN &&
+          lastState !== _t.CURLYOPEN &&
+          lastState !== _t.PARENOPEN &&
+          lastState !== _t.COLON) {
+        utils.throwError('Unexpected comma', self.line, self.filename);
+      }
+      if (lastState === _t.COLON) {
+        self.state.pop();
+      }
+      self.out.push(', ');
+      self.filterApplyIdx.pop();
+      break;
+
+    case _t.LOGIC:
+    case _t.COMPARATOR:
+      if (!prevToken ||
+          prevTokenType === _t.COMMA ||
+          prevTokenType === token.type ||
+          prevTokenType === _t.BRACKETOPEN ||
+          prevTokenType === _t.CURLYOPEN ||
+          prevTokenType === _t.PARENOPEN ||
+          prevTokenType === _t.FUNCTION) {
+        utils.throwError('Unexpected logic', self.line, self.filename);
+      }
+      self.out.push(token.match);
+      break;
+
+    case _t.NOT:
+      self.out.push(token.match);
+      break;
+
+    case _t.VAR:
+      self.parseVar(token, match, lastState);
+      break;
+
+    case _t.BRACKETOPEN:
+      if (!prevToken ||
+          (prevTokenType !== _t.VAR &&
+            prevTokenType !== _t.BRACKETCLOSE &&
+            prevTokenType !== _t.PARENCLOSE)) {
+        self.state.push(_t.ARRAYOPEN);
+        self.filterApplyIdx.push(self.out.length);
+      } else {
+        self.state.push(token.type);
+      }
+      self.out.push('[');
+      break;
+
+    case _t.BRACKETCLOSE:
+      temp = self.state.pop();
+      if (temp !== _t.BRACKETOPEN && temp !== _t.ARRAYOPEN) {
+        utils.throwError('Unexpected closing square bracket', self.line, self.filename);
+      }
+      self.out.push(']');
+      self.filterApplyIdx.pop();
+      break;
+
+    case _t.CURLYOPEN:
+      self.state.push(token.type);
+      self.out.push('{');
+      self.filterApplyIdx.push(self.out.length - 1);
+      break;
+
+    case _t.COLON:
+      if (lastState !== _t.CURLYOPEN) {
+        utils.throwError('Unexpected colon', self.line, self.filename);
+      }
+      self.state.push(token.type);
+      self.out.push(':');
+      self.filterApplyIdx.pop();
+      break;
+
+    case _t.CURLYCLOSE:
+      if (lastState === _t.COLON) {
+        self.state.pop();
+      }
+      if (self.state.pop() !== _t.CURLYOPEN) {
+        utils.throwError('Unexpected closing curly brace', self.line, self.filename);
+      }
+      self.out.push('}');
+
+      self.filterApplyIdx.pop();
+      break;
+
+    case _t.DOTKEY:
+      if (!prevToken || (
+          prevTokenType !== _t.VAR &&
+          prevTokenType !== _t.BRACKETCLOSE &&
+          prevTokenType !== _t.DOTKEY &&
+          prevTokenType !== _t.PARENCLOSE &&
+          prevTokenType !== _t.FUNCTIONEMPTY &&
+          prevTokenType !== _t.FILTEREMPTY &&
+          prevTokenType !== _t.CURLYCLOSE
+        )) {
+        utils.throwError('Unexpected key "' + match + '"', self.line, self.filename);
+      }
+      self.out.push('.' + match);
+      break;
+
+    case _t.OPERATOR:
+      self.out.push(' ' + match + ' ');
+      self.filterApplyIdx.pop();
+      break;
+    }
+  },
+
+  /**
+   * Parse variable token
+   * @param  {{match: string, type: number, line: number}} token      Lexer token object.
+   * @param  {string} match       Shortcut for token.match
+   * @param  {number} lastState   Lexer token type state.
+   * @return {undefined}
+   * @private
+   */
+  parseVar: function (token, match, lastState) {
+    var self = this;
+
+    match = match.split('.');
+
+    if (_reserved.indexOf(match[0]) !== -1) {
+      utils.throwError('Reserved keyword "' + match[0] + '" attempted to be used as a variable', self.line, self.filename);
+    }
+
+    self.filterApplyIdx.push(self.out.length);
+    if (lastState === _t.CURLYOPEN) {
+      if (match.length > 1) {
+        utils.throwError('Unexpected dot', self.line, self.filename);
+      }
+      self.out.push(match[0]);
+      return;
+    }
+
+    self.out.push(self.checkMatch(match));
+  },
+
+  /**
+   * Return contextual dot-check string for a match
+   * @param  {string} match       Shortcut for token.match
+   * @private
+   */
+  checkMatch: function (match) {
+    var temp = match[0], result;
+
+    function checkDot(ctx) {
+      var c = ctx + temp,
+        m = match,
+        build = '';
+
+      build = '(typeof ' + c + ' !== "undefined" && ' + c + ' !== null';
+      utils.each(m, function (v, i) {
+        if (i === 0) {
+          return;
+        }
+        build += ' && ' + c + '.' + v + ' !== undefined && ' + c + '.' + v + ' !== null';
+        c += '.' + v;
+      });
+      build += ')';
+
+      return build;
+    }
+
+    function buildDot(ctx) {
+      return '(' + checkDot(ctx) + ' ? ' + ctx + match.join('.') + ' : "")';
+    }
+    result = '(' + checkDot('_ctx.') + ' ? ' + buildDot('_ctx.') + ' : ' + buildDot('') + ')';
+    return '(' + result + ' !== null ? ' + result + ' : ' + '"" )';
+  }
+};
+
+/**
+ * Parse a source string into tokens that are ready for compilation.
+ *
+ * @example
+ * exports.parse('{{ tacos }}', {}, tags, filters);
+ * // => [{ compile: [Function], ... }]
+ *
+ * @params {object} swig    The current Swig instance
+ * @param  {string} source  Swig template source.
+ * @param  {object} opts    Swig options object.
+ * @param  {object} tags    Keyed object of tags that can be parsed and compiled.
+ * @param  {object} filters Keyed object of filters that may be applied to variables.
+ * @return {array}          List of tokens ready for compilation.
+ */
+exports.parse = function (swig, source, opts, tags, filters) {
+  source = source.replace(/\r\n/g, '\n');
+  var escape = opts.autoescape,
+    tagOpen = opts.tagControls[0],
+    tagClose = opts.tagControls[1],
+    varOpen = opts.varControls[0],
+    varClose = opts.varControls[1],
+    escapedTagOpen = escapeRegExp(tagOpen),
+    escapedTagClose = escapeRegExp(tagClose),
+    escapedVarOpen = escapeRegExp(varOpen),
+    escapedVarClose = escapeRegExp(varClose),
+    tagStrip = new RegExp('^' + escapedTagOpen + '-?\\s*-?|-?\\s*-?' + escapedTagClose + '$', 'g'),
+    tagStripBefore = new RegExp('^' + escapedTagOpen + '-'),
+    tagStripAfter = new RegExp('-' + escapedTagClose + '$'),
+    varStrip = new RegExp('^' + escapedVarOpen + '-?\\s*-?|-?\\s*-?' + escapedVarClose + '$', 'g'),
+    varStripBefore = new RegExp('^' + escapedVarOpen + '-'),
+    varStripAfter = new RegExp('-' + escapedVarClose + '$'),
+    cmtOpen = opts.cmtControls[0],
+    cmtClose = opts.cmtControls[1],
+    anyChar = '[\\s\\S]*?',
+    // Split the template source based on variable, tag, and comment blocks
+    // /(\{%[\s\S]*?%\}|\{\{[\s\S]*?\}\}|\{#[\s\S]*?#\})/
+    splitter = new RegExp(
+      '(' +
+        escapedTagOpen + anyChar + escapedTagClose + '|' +
+        escapedVarOpen + anyChar + escapedVarClose + '|' +
+        escapeRegExp(cmtOpen) + anyChar + escapeRegExp(cmtClose) +
+        ')'
+    ),
+    line = 1,
+    stack = [],
+    parent = null,
+    tokens = [],
+    blocks = {},
+    inRaw = false,
+    stripNext;
+
+  /**
+   * Parse a variable.
+   * @param  {string} str  String contents of the variable, between <i>{{</i> and <i>}}</i>
+   * @param  {number} line The line number that this variable starts on.
+   * @return {VarToken}      Parsed variable token object.
+   * @private
+   */
+  function parseVariable(str, line) {
+    var tokens = lexer.read(utils.strip(str)),
+      parser,
+      out;
+
+    parser = new TokenParser(tokens, filters, escape, line, opts.filename);
+    out = parser.parse().join('');
+
+    if (parser.state.length) {
+      utils.throwError('Unable to parse "' + str + '"', line, opts.filename);
+    }
+
+    /**
+     * A parsed variable token.
+     * @typedef {object} VarToken
+     * @property {function} compile Method for compiling this token.
+     */
+    return {
+      compile: function () {
+        return '_output += ' + out + ';\n';
+      }
+    };
+  }
+  exports.parseVariable = parseVariable;
+
+  /**
+   * Parse a tag.
+   * @param  {string} str  String contents of the tag, between <i>{%</i> and <i>%}</i>
+   * @param  {number} line The line number that this tag starts on.
+   * @return {TagToken}      Parsed token object.
+   * @private
+   */
+  function parseTag(str, line) {
+    var tokens, parser, chunks, tagName, tag, args, last;
+
+    if (utils.startsWith(str, 'end')) {
+      last = stack[stack.length - 1];
+      if (last && last.name === str.split(/\s+/)[0].replace(/^end/, '') && last.ends) {
+        switch (last.name) {
+        case 'autoescape':
+          escape = opts.autoescape;
+          break;
+        case 'raw':
+          inRaw = false;
+          break;
+        }
+        stack.pop();
+        return;
+      }
+
+      if (!inRaw) {
+        utils.throwError('Unexpected end of tag "' + str.replace(/^end/, '') + '"', line, opts.filename);
+      }
+    }
+
+    if (inRaw) {
+      return;
+    }
+
+    chunks = str.split(/\s+(.+)?/);
+    tagName = chunks.shift();
+
+    if (!tags.hasOwnProperty(tagName)) {
+      utils.throwError('Unexpected tag "' + str + '"', line, opts.filename);
+    }
+
+    tokens = lexer.read(utils.strip(chunks.join(' ')));
+    parser = new TokenParser(tokens, filters, false, line, opts.filename);
+    tag = tags[tagName];
+
+    /**
+     * Define custom parsing methods for your tag.
+     * @callback parse
+     *
+     * @example
+     * exports.parse = function (str, line, parser, types, options, swig) {
+     *   parser.on('start', function () {
+     *     // ...
+     *   });
+     *   parser.on(types.STRING, function (token) {
+     *     // ...
+     *   });
+     * };
+     *
+     * @param {string} str The full token string of the tag.
+     * @param {number} line The line number that this tag appears on.
+     * @param {TokenParser} parser A TokenParser instance.
+     * @param {TYPES} types Lexer token type enum.
+     * @param {TagToken[]} stack The current stack of open tags.
+     * @param {SwigOpts} options Swig Options Object.
+     * @param {object} swig The Swig instance (gives acces to loaders, parsers, etc)
+     */
+    if (!tag.parse(chunks[1], line, parser, _t, stack, opts, swig)) {
+      utils.throwError('Unexpected tag "' + tagName + '"', line, opts.filename);
+    }
+
+    parser.parse();
+    args = parser.out;
+
+    switch (tagName) {
+    case 'autoescape':
+      escape = (args[0] !== 'false') ? args[0] : false;
+      break;
+    case 'raw':
+      inRaw = true;
+      break;
+    }
+
+    /**
+     * A parsed tag token.
+     * @typedef {Object} TagToken
+     * @property {compile} [compile] Method for compiling this token.
+     * @property {array} [args] Array of arguments for the tag.
+     * @property {Token[]} [content=[]] An array of tokens that are children of this Token.
+     * @property {boolean} [ends] Whether or not this tag requires an end tag.
+     * @property {string} name The name of this tag.
+     */
+    return {
+      block: !!tags[tagName].block,
+      compile: tag.compile,
+      args: args,
+      content: [],
+      ends: tag.ends,
+      name: tagName
+    };
+  }
+
+  /**
+   * Strip the whitespace from the previous token, if it is a string.
+   * @param  {object} token Parsed token.
+   * @return {object}       If the token was a string, trailing whitespace will be stripped.
+   */
+  function stripPrevToken(token) {
+    if (typeof token === 'string') {
+      token = token.replace(/\s*$/, '');
+    }
+    return token;
+  }
+
+  /*!
+   * Loop over the source, split via the tag/var/comment regular expression splitter.
+   * Send each chunk to the appropriate parser.
+   */
+  utils.each(source.split(splitter), function (chunk) {
+    var token, lines, stripPrev, prevToken, prevChildToken;
+
+    if (!chunk) {
+      return;
+    }
+
+    // Is a variable?
+    if (!inRaw && utils.startsWith(chunk, varOpen) && utils.endsWith(chunk, varClose)) {
+      stripPrev = varStripBefore.test(chunk);
+      stripNext = varStripAfter.test(chunk);
+      token = parseVariable(chunk.replace(varStrip, ''), line);
+    // Is a tag?
+    } else if (utils.startsWith(chunk, tagOpen) && utils.endsWith(chunk, tagClose)) {
+      stripPrev = tagStripBefore.test(chunk);
+      stripNext = tagStripAfter.test(chunk);
+      token = parseTag(chunk.replace(tagStrip, ''), line);
+      if (token) {
+        if (token.name === 'extends') {
+          parent = token.args.join('').replace(/^\'|\'$/g, '').replace(/^\"|\"$/g, '');
+        } else if (token.block && !stack.length) {
+          blocks[token.args.join('')] = token;
+        }
+      }
+      if (inRaw && !token) {
+        token = chunk;
+      }
+    // Is a content string?
+    } else if (inRaw || (!utils.startsWith(chunk, cmtOpen) && !utils.endsWith(chunk, cmtClose))) {
+      token = (stripNext) ? chunk.replace(/^\s*/, '') : chunk;
+      stripNext = false;
+    } else if (utils.startsWith(chunk, cmtOpen) && utils.endsWith(chunk, cmtClose)) {
+      return;
+    }
+
+    // Did this tag ask to strip previous whitespace? <code>{%- ... %}</code> or <code>{{- ... }}</code>
+    if (stripPrev && tokens.length) {
+      prevToken = tokens.pop();
+      if (typeof prevToken === 'string') {
+        prevToken = stripPrevToken(prevToken);
+      } else if (prevToken.content && prevToken.content.length) {
+        prevChildToken = stripPrevToken(prevToken.content.pop());
+        prevToken.content.push(prevChildToken);
+      }
+      tokens.push(prevToken);
+    }
+
+    // This was a comment, so let's just keep going.
+    if (!token) {
+      return;
+    }
+
+    // If there's an open item in the stack, add this to its content.
+    if (stack.length) {
+      stack[stack.length - 1].content.push(token);
+    } else {
+      tokens.push(token);
+    }
+
+    // If the token is a tag that requires an end tag, open it on the stack.
+    if (token.name && token.ends) {
+      stack.push(token);
+    }
+
+    lines = chunk.match(/\n/g);
+    line += (lines) ? lines.length : 0;
+  });
+
+  return {
+    name: opts.filename,
+    parent: parent,
+    tokens: tokens,
+    blocks: blocks
+  };
+};
+
+
+/**
+ * Compile an array of tokens.
+ * @param  {Token[]} template     An array of template tokens.
+ * @param  {Templates[]} parents  Array of parent templates.
+ * @param  {SwigOpts} [options]   Swig options object.
+ * @param  {string} [blockName]   Name of the current block context.
+ * @return {string}               Partial for a compiled JavaScript method that will output a rendered template.
+ */
+exports.compile = function (template, parents, options, blockName) {
+  var out = '',
+    tokens = utils.isArray(template) ? template : template.tokens;
+
+  utils.each(tokens, function (token) {
+    var o;
+    if (typeof token === 'string') {
+      out += '_output += "' + token.replace(/\\/g, '\\\\').replace(/\n|\r/g, '\\n').replace(/"/g, '\\"') + '";\n';
+      return;
+    }
+
+    /**
+     * Compile callback for VarToken and TagToken objects.
+     * @callback compile
+     *
+     * @example
+     * exports.compile = function (compiler, args, content, parents, options, blockName) {
+     *   if (args[0] === 'foo') {
+     *     return compiler(content, parents, options, blockName) + '\n';
+     *   }
+     *   return '_output += "fallback";\n';
+     * };
+     *
+     * @param {parserCompiler} compiler
+     * @param {array} [args] Array of parsed arguments on the for the token.
+     * @param {array} [content] Array of content within the token.
+     * @param {array} [parents] Array of parent templates for the current template context.
+     * @param {SwigOpts} [options] Swig Options Object
+     * @param {string} [blockName] Name of the direct block parent, if any.
+     */
+    o = token.compile(exports.compile, token.args ? token.args.slice(0) : [], token.content ? token.content.slice(0) : [], parents, options, blockName);
+    out += o || '';
+  });
+
+  return out;
+};
+
+},{"./lexer":53,"./utils":75}],58:[function(require,module,exports){
+var utils = require('./utils'),
+  _tags = require('./tags'),
+  _filters = require('./filters'),
+  parser = require('./parser'),
+  dateformatter = require('./dateformatter'),
+  loaders = require('./loaders');
+
+/**
+ * Swig version number as a string.
+ * @example
+ * if (swig.version === "1.4.2") { ... }
+ *
+ * @type {String}
+ */
+exports.version = "1.4.2";
+
+/**
+ * Swig Options Object. This object can be passed to many of the API-level Swig methods to control various aspects of the engine. All keys are optional.
+ * @typedef {Object} SwigOpts
+ * @property {boolean} autoescape  Controls whether or not variable output will automatically be escaped for safe HTML output. Defaults to <code data-language="js">true</code>. Functions executed in variable statements will not be auto-escaped. Your application/functions should take care of their own auto-escaping.
+ * @property {array}   varControls Open and close controls for variables. Defaults to <code data-language="js">['{{', '}}']</code>.
+ * @property {array}   tagControls Open and close controls for tags. Defaults to <code data-language="js">['{%', '%}']</code>.
+ * @property {array}   cmtControls Open and close controls for comments. Defaults to <code data-language="js">['{#', '#}']</code>.
+ * @property {object}  locals      Default variable context to be passed to <strong>all</strong> templates.
+ * @property {CacheOptions} cache Cache control for templates. Defaults to saving in <code data-language="js">'memory'</code>. Send <code data-language="js">false</code> to disable. Send an object with <code data-language="js">get</code> and <code data-language="js">set</code> functions to customize.
+ * @property {TemplateLoader} loader The method that Swig will use to load templates. Defaults to <var>swig.loaders.fs</var>.
+ */
+var defaultOptions = {
+    autoescape: true,
+    varControls: ['{{', '}}'],
+    tagControls: ['{%', '%}'],
+    cmtControls: ['{#', '#}'],
+    locals: {},
+    /**
+     * Cache control for templates. Defaults to saving all templates into memory.
+     * @typedef {boolean|string|object} CacheOptions
+     * @example
+     * // Default
+     * swig.setDefaults({ cache: 'memory' });
+     * @example
+     * // Disables caching in Swig.
+     * swig.setDefaults({ cache: false });
+     * @example
+     * // Custom cache storage and retrieval
+     * swig.setDefaults({
+     *   cache: {
+     *     get: function (key) { ... },
+     *     set: function (key, val) { ... }
+     *   }
+     * });
+     */
+    cache: 'memory',
+    /**
+     * Configure Swig to use either the <var>swig.loaders.fs</var> or <var>swig.loaders.memory</var> template loader. Or, you can write your own!
+     * For more information, please see the <a href="../loaders/">Template Loaders documentation</a>.
+     * @typedef {class} TemplateLoader
+     * @example
+     * // Default, FileSystem loader
+     * swig.setDefaults({ loader: swig.loaders.fs() });
+     * @example
+     * // FileSystem loader allowing a base path
+     * // With this, you don't use relative URLs in your template references
+     * swig.setDefaults({ loader: swig.loaders.fs(__dirname + '/templates') });
+     * @example
+     * // Memory Loader
+     * swig.setDefaults({ loader: swig.loaders.memory({
+     *   layout: '{% block foo %}{% endblock %}',
+     *   page1: '{% extends "layout" %}{% block foo %}Tacos!{% endblock %}'
+     * })});
+     */
+    loader: loaders.fs()
+  },
+  defaultInstance;
+
+/**
+ * Empty function, used in templates.
+ * @return {string} Empty string
+ * @private
+ */
+function efn() { return ''; }
+
+/**
+ * Validate the Swig options object.
+ * @param  {?SwigOpts} options Swig options object.
+ * @return {undefined}      This method will throw errors if anything is wrong.
+ * @private
+ */
+function validateOptions(options) {
+  if (!options) {
+    return;
+  }
+
+  utils.each(['varControls', 'tagControls', 'cmtControls'], function (key) {
+    if (!options.hasOwnProperty(key)) {
+      return;
+    }
+    if (!utils.isArray(options[key]) || options[key].length !== 2) {
+      throw new Error('Option "' + key + '" must be an array containing 2 different control strings.');
+    }
+    if (options[key][0] === options[key][1]) {
+      throw new Error('Option "' + key + '" open and close controls must not be the same.');
+    }
+    utils.each(options[key], function (a, i) {
+      if (a.length < 2) {
+        throw new Error('Option "' + key + '" ' + ((i) ? 'open ' : 'close ') + 'control must be at least 2 characters. Saw "' + a + '" instead.');
+      }
+    });
+  });
+
+  if (options.hasOwnProperty('cache')) {
+    if (options.cache && options.cache !== 'memory') {
+      if (!options.cache.get || !options.cache.set) {
+        throw new Error('Invalid cache option ' + JSON.stringify(options.cache) + ' found. Expected "memory" or { get: function (key) { ... }, set: function (key, value) { ... } }.');
+      }
+    }
+  }
+  if (options.hasOwnProperty('loader')) {
+    if (options.loader) {
+      if (!options.loader.load || !options.loader.resolve) {
+        throw new Error('Invalid loader option ' + JSON.stringify(options.loader) + ' found. Expected { load: function (pathname, cb) { ... }, resolve: function (to, from) { ... } }.');
+      }
+    }
+  }
+
+}
+
+/**
+ * Set defaults for the base and all new Swig environments.
+ *
+ * @example
+ * swig.setDefaults({ cache: false });
+ * // => Disables Cache
+ *
+ * @example
+ * swig.setDefaults({ locals: { now: function () { return new Date(); } }});
+ * // => sets a globally accessible method for all template
+ * //    contexts, allowing you to print the current date
+ * // => {{ now()|date('F jS, Y') }}
+ *
+ * @param  {SwigOpts} [options={}] Swig options object.
+ * @return {undefined}
+ */
+exports.setDefaults = function (options) {
+  validateOptions(options);
+  defaultInstance.options = utils.extend(defaultInstance.options, options);
+};
+
+/**
+ * Set the default TimeZone offset for date formatting via the date filter. This is a global setting and will affect all Swig environments, old or new.
+ * @param  {number} offset Offset from GMT, in minutes.
+ * @return {undefined}
+ */
+exports.setDefaultTZOffset = function (offset) {
+  dateformatter.tzOffset = offset;
+};
+
+/**
+ * Create a new, separate Swig compile/render environment.
+ *
+ * @example
+ * var swig = require('swig');
+ * var myswig = new swig.Swig({varControls: ['<%=', '%>']});
+ * myswig.render('Tacos are <%= tacos =>!', { locals: { tacos: 'delicious' }});
+ * // => Tacos are delicious!
+ * swig.render('Tacos are <%= tacos =>!', { locals: { tacos: 'delicious' }});
+ * // => 'Tacos are <%= tacos =>!'
+ *
+ * @param  {SwigOpts} [opts={}] Swig options object.
+ * @return {object}      New Swig environment.
+ */
+exports.Swig = function (opts) {
+  validateOptions(opts);
+  this.options = utils.extend({}, defaultOptions, opts || {});
+  this.cache = {};
+  this.extensions = {};
+  var self = this,
+    tags = _tags,
+    filters = _filters;
+
+  /**
+   * Get combined locals context.
+   * @param  {?SwigOpts} [options] Swig options object.
+   * @return {object}         Locals context.
+   * @private
+   */
+  function getLocals(options) {
+    if (!options || !options.locals) {
+      return self.options.locals;
+    }
+
+    return utils.extend({}, self.options.locals, options.locals);
+  }
+
+  /**
+   * Determine whether caching is enabled via the options provided and/or defaults
+   * @param  {SwigOpts} [options={}] Swig Options Object
+   * @return {boolean}
+   * @private
+   */
+  function shouldCache(options) {
+    options = options || {};
+    return (options.hasOwnProperty('cache') && !options.cache) || !self.options.cache;
+  }
+
+  /**
+   * Get compiled template from the cache.
+   * @param  {string} key           Name of template.
+   * @return {object|undefined}     Template function and tokens.
+   * @private
+   */
+  function cacheGet(key, options) {
+    if (shouldCache(options)) {
+      return;
+    }
+
+    if (self.options.cache === 'memory') {
+      return self.cache[key];
+    }
+
+    return self.options.cache.get(key);
+  }
+
+  /**
+   * Store a template in the cache.
+   * @param  {string} key Name of template.
+   * @param  {object} val Template function and tokens.
+   * @return {undefined}
+   * @private
+   */
+  function cacheSet(key, options, val) {
+    if (shouldCache(options)) {
+      return;
+    }
+
+    if (self.options.cache === 'memory') {
+      self.cache[key] = val;
+      return;
+    }
+
+    self.options.cache.set(key, val);
+  }
+
+  /**
+   * Clears the in-memory template cache.
+   *
+   * @example
+   * swig.invalidateCache();
+   *
+   * @return {undefined}
+   */
+  this.invalidateCache = function () {
+    if (self.options.cache === 'memory') {
+      self.cache = {};
+    }
+  };
+
+  /**
+   * Add a custom filter for swig variables.
+   *
+   * @example
+   * function replaceMs(input) { return input.replace(/m/g, 'f'); }
+   * swig.setFilter('replaceMs', replaceMs);
+   * // => {{ "onomatopoeia"|replaceMs }}
+   * // => onofatopeia
+   *
+   * @param {string}    name    Name of filter, used in templates. <strong>Will</strong> overwrite previously defined filters, if using the same name.
+   * @param {function}  method  Function that acts against the input. See <a href="/docs/filters/#custom">Custom Filters</a> for more information.
+   * @return {undefined}
+   */
+  this.setFilter = function (name, method) {
+    if (typeof method !== "function") {
+      throw new Error('Filter "' + name + '" is not a valid function.');
+    }
+    filters[name] = method;
+  };
+
+  /**
+   * Add a custom tag. To expose your own extensions to compiled template code, see <code data-language="js">swig.setExtension</code>.
+   *
+   * For a more in-depth explanation of writing custom tags, see <a href="../extending/#tags">Custom Tags</a>.
+   *
+   * @example
+   * var tacotag = require('./tacotag');
+   * swig.setTag('tacos', tacotag.parse, tacotag.compile, tacotag.ends, tacotag.blockLevel);
+   * // => {% tacos %}Make this be tacos.{% endtacos %}
+   * // => Tacos tacos tacos tacos.
+   *
+   * @param  {string} name      Tag name.
+   * @param  {function} parse   Method for parsing tokens.
+   * @param  {function} compile Method for compiling renderable output.
+   * @param  {boolean} [ends=false]     Whether or not this tag requires an <i>end</i> tag.
+   * @param  {boolean} [blockLevel=false] If false, this tag will not be compiled outside of <code>block</code> tags when extending a parent template.
+   * @return {undefined}
+   */
+  this.setTag = function (name, parse, compile, ends, blockLevel) {
+    if (typeof parse !== 'function') {
+      throw new Error('Tag "' + name + '" parse method is not a valid function.');
+    }
+
+    if (typeof compile !== 'function') {
+      throw new Error('Tag "' + name + '" compile method is not a valid function.');
+    }
+
+    tags[name] = {
+      parse: parse,
+      compile: compile,
+      ends: ends || false,
+      block: !!blockLevel
+    };
+  };
+
+  /**
+   * Add extensions for custom tags. This allows any custom tag to access a globally available methods via a special globally available object, <var>_ext</var>, in templates.
+   *
+   * @example
+   * swig.setExtension('trans', function (v) { return translate(v); });
+   * function compileTrans(compiler, args, content, parent, options) {
+   *   return '_output += _ext.trans(' + args[0] + ');'
+   * };
+   * swig.setTag('trans', parseTrans, compileTrans, true);
+   *
+   * @param  {string} name   Key name of the extension. Accessed via <code data-language="js">_ext[name]</code>.
+   * @param  {*}      object The method, value, or object that should be available via the given name.
+   * @return {undefined}
+   */
+  this.setExtension = function (name, object) {
+    self.extensions[name] = object;
+  };
+
+  /**
+   * Parse a given source string into tokens.
+   *
+   * @param  {string} source  Swig template source.
+   * @param  {SwigOpts} [options={}] Swig options object.
+   * @return {object} parsed  Template tokens object.
+   * @private
+   */
+  this.parse = function (source, options) {
+    validateOptions(options);
+
+    var locals = getLocals(options),
+      opts = {},
+      k;
+
+    for (k in options) {
+      if (options.hasOwnProperty(k) && k !== 'locals') {
+        opts[k] = options[k];
+      }
+    }
+
+    options = utils.extend({}, self.options, opts);
+    options.locals = locals;
+
+    return parser.parse(this, source, options, tags, filters);
+  };
+
+  /**
+   * Parse a given file into tokens.
+   *
+   * @param  {string} pathname  Full path to file to parse.
+   * @param  {SwigOpts} [options={}]   Swig options object.
+   * @return {object} parsed    Template tokens object.
+   * @private
+   */
+  this.parseFile = function (pathname, options) {
+    var src;
+
+    if (!options) {
+      options = {};
+    }
+
+    pathname = self.options.loader.resolve(pathname, options.resolveFrom);
+
+    src = self.options.loader.load(pathname);
+
+    if (!options.filename) {
+      options = utils.extend({ filename: pathname }, options);
+    }
+
+    return self.parse(src, options);
+  };
+
+  /**
+   * Re-Map blocks within a list of tokens to the template's block objects.
+   * @param  {array}  tokens   List of tokens for the parent object.
+   * @param  {object} template Current template that needs to be mapped to the  parent's block and token list.
+   * @return {array}
+   * @private
+   */
+  function remapBlocks(blocks, tokens) {
+    return utils.map(tokens, function (token) {
+      var args = token.args ? token.args.join('') : '';
+      if (token.name === 'block' && blocks[args]) {
+        token = blocks[args];
+      }
+      if (token.content && token.content.length) {
+        token.content = remapBlocks(blocks, token.content);
+      }
+      return token;
+    });
+  }
+
+  /**
+   * Import block-level tags to the token list that are not actual block tags.
+   * @param  {array} blocks List of block-level tags.
+   * @param  {array} tokens List of tokens to render.
+   * @return {undefined}
+   * @private
+   */
+  function importNonBlocks(blocks, tokens) {
+    var temp = [];
+    utils.each(blocks, function (block) { temp.push(block); });
+    utils.each(temp.reverse(), function (block) {
+      if (block.name !== 'block') {
+        tokens.unshift(block);
+      }
+    });
+  }
+
+  /**
+   * Recursively compile and get parents of given parsed token object.
+   *
+   * @param  {object} tokens    Parsed tokens from template.
+   * @param  {SwigOpts} [options={}]   Swig options object.
+   * @return {object}           Parsed tokens from parent templates.
+   * @private
+   */
+  function getParents(tokens, options) {
+    var parentName = tokens.parent,
+      parentFiles = [],
+      parents = [],
+      parentFile,
+      parent,
+      l;
+
+    while (parentName) {
+      if (!options || !options.filename) {
+        throw new Error('Cannot extend "' + parentName + '" because current template has no filename.');
+      }
+
+      parentFile = parentFile || options.filename;
+      parentFile = self.options.loader.resolve(parentName, parentFile);
+      parent = cacheGet(parentFile, options) || self.parseFile(parentFile, utils.extend({}, options, { filename: parentFile }));
+      parentName = parent.parent;
+
+      if (parentFiles.indexOf(parentFile) !== -1) {
+        throw new Error('Illegal circular extends of "' + parentFile + '".');
+      }
+      parentFiles.push(parentFile);
+
+      parents.push(parent);
+    }
+
+    // Remap each parents'(1) blocks onto its own parent(2), receiving the full token list for rendering the original parent(1) on its own.
+    l = parents.length;
+    for (l = parents.length - 2; l >= 0; l -= 1) {
+      parents[l].tokens = remapBlocks(parents[l].blocks, parents[l + 1].tokens);
+      importNonBlocks(parents[l].blocks, parents[l].tokens);
+    }
+
+    return parents;
+  }
+
+  /**
+   * Pre-compile a source string into a cache-able template function.
+   *
+   * @example
+   * swig.precompile('{{ tacos }}');
+   * // => {
+   * //      tpl: function (_swig, _locals, _filters, _utils, _fn) { ... },
+   * //      tokens: {
+   * //        name: undefined,
+   * //        parent: null,
+   * //        tokens: [...],
+   * //        blocks: {}
+   * //      }
+   * //    }
+   *
+   * In order to render a pre-compiled template, you must have access to filters and utils from Swig. <var>efn</var> is simply an empty function that does nothing.
+   *
+   * @param  {string} source  Swig template source string.
+   * @param  {SwigOpts} [options={}] Swig options object.
+   * @return {object}         Renderable function and tokens object.
+   */
+  this.precompile = function (source, options) {
+    var tokens = self.parse(source, options),
+      parents = getParents(tokens, options),
+      tpl,
+      err;
+
+    if (parents.length) {
+      // Remap the templates first-parent's tokens using this template's blocks.
+      tokens.tokens = remapBlocks(tokens.blocks, parents[0].tokens);
+      importNonBlocks(tokens.blocks, tokens.tokens);
+    }
+
+    try {
+      tpl = new Function('_swig', '_ctx', '_filters', '_utils', '_fn',
+        '  var _ext = _swig.extensions,\n' +
+        '    _output = "";\n' +
+        parser.compile(tokens, parents, options) + '\n' +
+        '  return _output;\n'
+        );
+    } catch (e) {
+      utils.throwError(e, null, options.filename);
+    }
+
+    return { tpl: tpl, tokens: tokens };
+  };
+
+  /**
+   * Compile and render a template string for final output.
+   *
+   * When rendering a source string, a file path should be specified in the options object in order for <var>extends</var>, <var>include</var>, and <var>import</var> to work properly. Do this by adding <code data-language="js">{ filename: '/absolute/path/to/mytpl.html' }</code> to the options argument.
+   *
+   * @example
+   * swig.render('{{ tacos }}', { locals: { tacos: 'Tacos!!!!' }});
+   * // => Tacos!!!!
+   *
+   * @param  {string} source    Swig template source string.
+   * @param  {SwigOpts} [options={}] Swig options object.
+   * @return {string}           Rendered output.
+   */
+  this.render = function (source, options) {
+    return self.compile(source, options)();
+  };
+
+  /**
+   * Compile and render a template file for final output. This is most useful for libraries like Express.js.
+   *
+   * @example
+   * swig.renderFile('./template.html', {}, function (err, output) {
+   *   if (err) {
+   *     throw err;
+   *   }
+   *   console.log(output);
+   * });
+   *
+   * @example
+   * swig.renderFile('./template.html', {});
+   * // => output
+   *
+   * @param  {string}   pathName    File location.
+   * @param  {object}   [locals={}] Template variable context.
+   * @param  {Function} [cb] Asyncronous callback function. If not provided, <var>compileFile</var> will run syncronously.
+   * @return {string}             Rendered output.
+   */
+  this.renderFile = function (pathName, locals, cb) {
+    if (cb) {
+      self.compileFile(pathName, {}, function (err, fn) {
+        var result;
+
+        if (err) {
+          cb(err);
+          return;
+        }
+
+        try {
+          result = fn(locals);
+        } catch (err2) {
+          cb(err2);
+          return;
+        }
+
+        cb(null, result);
+      });
+      return;
+    }
+
+    return self.compileFile(pathName)(locals);
+  };
+
+  /**
+   * Compile string source into a renderable template function.
+   *
+   * @example
+   * var tpl = swig.compile('{{ tacos }}');
+   * // => {
+   * //      [Function: compiled]
+   * //      parent: null,
+   * //      tokens: [{ compile: [Function] }],
+   * //      blocks: {}
+   * //    }
+   * tpl({ tacos: 'Tacos!!!!' });
+   * // => Tacos!!!!
+   *
+   * When compiling a source string, a file path should be specified in the options object in order for <var>extends</var>, <var>include</var>, and <var>import</var> to work properly. Do this by adding <code data-language="js">{ filename: '/absolute/path/to/mytpl.html' }</code> to the options argument.
+   *
+   * @param  {string} source    Swig template source string.
+   * @param  {SwigOpts} [options={}] Swig options object.
+   * @return {function}         Renderable function with keys for parent, blocks, and tokens.
+   */
+  this.compile = function (source, options) {
+    var key = options ? options.filename : null,
+      cached = key ? cacheGet(key, options) : null,
+      context,
+      contextLength,
+      pre;
+
+    if (cached) {
+      return cached;
+    }
+
+    context = getLocals(options);
+    contextLength = utils.keys(context).length;
+    pre = this.precompile(source, options);
+
+    function compiled(locals) {
+      var lcls;
+      if (locals && contextLength) {
+        lcls = utils.extend({}, context, locals);
+      } else if (locals && !contextLength) {
+        lcls = locals;
+      } else if (!locals && contextLength) {
+        lcls = context;
+      } else {
+        lcls = {};
+      }
+      return pre.tpl(self, lcls, filters, utils, efn);
+    }
+
+    utils.extend(compiled, pre.tokens);
+
+    if (key) {
+      cacheSet(key, options, compiled);
+    }
+
+    return compiled;
+  };
+
+  /**
+   * Compile a source file into a renderable template function.
+   *
+   * @example
+   * var tpl = swig.compileFile('./mytpl.html');
+   * // => {
+   * //      [Function: compiled]
+   * //      parent: null,
+   * //      tokens: [{ compile: [Function] }],
+   * //      blocks: {}
+   * //    }
+   * tpl({ tacos: 'Tacos!!!!' });
+   * // => Tacos!!!!
+   *
+   * @example
+   * swig.compileFile('/myfile.txt', { varControls: ['<%=', '=%>'], tagControls: ['<%', '%>']});
+   * // => will compile 'myfile.txt' using the var and tag controls as specified.
+   *
+   * @param  {string} pathname  File location.
+   * @param  {SwigOpts} [options={}] Swig options object.
+   * @param  {Function} [cb] Asyncronous callback function. If not provided, <var>compileFile</var> will run syncronously.
+   * @return {function}         Renderable function with keys for parent, blocks, and tokens.
+   */
+  this.compileFile = function (pathname, options, cb) {
+    var src, cached;
+
+    if (!options) {
+      options = {};
+    }
+
+    pathname = self.options.loader.resolve(pathname, options.resolveFrom);
+    if (!options.filename) {
+      options = utils.extend({ filename: pathname }, options);
+    }
+    cached = cacheGet(pathname, options);
+
+    if (cached) {
+      if (cb) {
+        cb(null, cached);
+        return;
+      }
+      return cached;
+    }
+
+    if (cb) {
+      self.options.loader.load(pathname, function (err, src) {
+        if (err) {
+          cb(err);
+          return;
+        }
+        var compiled;
+
+        try {
+          compiled = self.compile(src, options);
+        } catch (err2) {
+          cb(err2);
+          return;
+        }
+
+        cb(err, compiled);
+      });
+      return;
+    }
+
+    src = self.options.loader.load(pathname);
+    return self.compile(src, options);
+  };
+
+  /**
+   * Run a pre-compiled template function. This is most useful in the browser when you've pre-compiled your templates with the Swig command-line tool.
+   *
+   * @example
+   * $ swig compile ./mytpl.html --wrap-start="var mytpl = " > mytpl.js
+   * @example
+   * <script src="mytpl.js"></script>
+   * <script>
+   *   swig.run(mytpl, {});
+   *   // => "rendered template..."
+   * </script>
+   *
+   * @param  {function} tpl       Pre-compiled Swig template function. Use the Swig CLI to compile your templates.
+   * @param  {object} [locals={}] Template variable context.
+   * @param  {string} [filepath]  Filename used for caching the template.
+   * @return {string}             Rendered output.
+   */
+  this.run = function (tpl, locals, filepath) {
+    var context = getLocals({ locals: locals });
+    if (filepath) {
+      cacheSet(filepath, {}, tpl);
+    }
+    return tpl(self, context, filters, utils, efn);
+  };
+};
+
+/*!
+ * Export methods publicly
+ */
+defaultInstance = new exports.Swig();
+exports.setFilter = defaultInstance.setFilter;
+exports.setTag = defaultInstance.setTag;
+exports.setExtension = defaultInstance.setExtension;
+exports.parseFile = defaultInstance.parseFile;
+exports.precompile = defaultInstance.precompile;
+exports.compile = defaultInstance.compile;
+exports.compileFile = defaultInstance.compileFile;
+exports.render = defaultInstance.render;
+exports.renderFile = defaultInstance.renderFile;
+exports.run = defaultInstance.run;
+exports.invalidateCache = defaultInstance.invalidateCache;
+exports.loaders = loaders;
+
+},{"./dateformatter":51,"./filters":52,"./loaders":55,"./parser":57,"./tags":69,"./utils":75}],59:[function(require,module,exports){
+var utils = require('../utils'),
+  strings = ['html', 'js'];
+
+/**
+ * Control auto-escaping of variable output from within your templates.
+ *
+ * @alias autoescape
+ *
+ * @example
+ * // myvar = '<foo>';
+ * {% autoescape true %}{{ myvar }}{% endautoescape %}
+ * // => &lt;foo&gt;
+ * {% autoescape false %}{{ myvar }}{% endautoescape %}
+ * // => <foo>
+ *
+ * @param {boolean|string} control One of `true`, `false`, `"js"` or `"html"`.
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  return compiler(content, parents, options, blockName);
+};
+exports.parse = function (str, line, parser, types, stack, opts) {
+  var matched;
+  parser.on('*', function (token) {
+    if (!matched &&
+        (token.type === types.BOOL ||
+          (token.type === types.STRING && strings.indexOf(token.match) === -1))
+        ) {
+      this.out.push(token.match);
+      matched = true;
+      return;
+    }
+    utils.throwError('Unexpected token "' + token.match + '" in autoescape tag', line, opts.filename);
+  });
+
+  return true;
+};
+exports.ends = true;
+
+},{"../utils":75}],60:[function(require,module,exports){
+/**
+ * Defines a block in a template that can be overridden by a template extending this one and/or will override the current template's parent template block of the same name.
+ *
+ * See <a href="#inheritance">Template Inheritance</a> for more information.
+ *
+ * @alias block
+ *
+ * @example
+ * {% block body %}...{% endblock %}
+ *
+ * @param {literal}  name   Name of the block for use in parent and extended templates.
+ */
+exports.compile = function (compiler, args, content, parents, options) {
+  return compiler(content, parents, options, args.join(''));
+};
+
+exports.parse = function (str, line, parser) {
+  parser.on('*', function (token) {
+    this.out.push(token.match);
+  });
+  return true;
+};
+
+exports.ends = true;
+exports.block = true;
+
+},{}],61:[function(require,module,exports){
+/**
+ * Used within an <code data-language="swig">{% if %}</code> tag, the code block following this tag up until <code data-language="swig">{% endif %}</code> will be rendered if the <i>if</i> statement returns false.
+ *
+ * @alias else
+ *
+ * @example
+ * {% if false %}
+ *   statement1
+ * {% else %}
+ *   statement2
+ * {% endif %}
+ * // => statement2
+ *
+ */
+exports.compile = function () {
+  return '} else {\n';
+};
+
+exports.parse = function (str, line, parser, types, stack) {
+  parser.on('*', function (token) {
+    throw new Error('"else" tag does not accept any tokens. Found "' + token.match + '" on line ' + line + '.');
+  });
+
+  return (stack.length && stack[stack.length - 1].name === 'if');
+};
+
+},{}],62:[function(require,module,exports){
+var ifparser = require('./if').parse;
+
+/**
+ * Like <code data-language="swig">{% else %}</code>, except this tag can take more conditional statements.
+ *
+ * @alias elseif
+ * @alias elif
+ *
+ * @example
+ * {% if false %}
+ *   Tacos
+ * {% elseif true %}
+ *   Burritos
+ * {% else %}
+ *   Churros
+ * {% endif %}
+ * // => Burritos
+ *
+ * @param {...mixed} conditional  Conditional statement that returns a truthy or falsy value.
+ */
+exports.compile = function (compiler, args) {
+  return '} else if (' + args.join(' ') + ') {\n';
+};
+
+exports.parse = function (str, line, parser, types, stack) {
+  var okay = ifparser(str, line, parser, types, stack);
+  return okay && (stack.length && stack[stack.length - 1].name === 'if');
+};
+
+},{"./if":66}],63:[function(require,module,exports){
+/**
+ * Makes the current template extend a parent template. This tag must be the first item in your template.
+ *
+ * See <a href="#inheritance">Template Inheritance</a> for more information.
+ *
+ * @alias extends
+ *
+ * @example
+ * {% extends "./layout.html" %}
+ *
+ * @param {string} parentFile  Relative path to the file that this template extends.
+ */
+exports.compile = function () {};
+
+exports.parse = function () {
+  return true;
+};
+
+exports.ends = false;
+
+},{}],64:[function(require,module,exports){
+var filters = require('../filters');
+
+/**
+ * Apply a filter to an entire block of template.
+ *
+ * @alias filter
+ *
+ * @example
+ * {% filter uppercase %}oh hi, {{ name }}{% endfilter %}
+ * // => OH HI, PAUL
+ *
+ * @example
+ * {% filter replace(".", "!", "g") %}Hi. My name is Paul.{% endfilter %}
+ * // => Hi! My name is Paul!
+ *
+ * @param {function} filter  The filter that should be applied to the contents of the tag.
+ */
+
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  var filter = args.shift().replace(/\($/, ''),
+    val = '(function () {\n' +
+      '  var _output = "";\n' +
+      compiler(content, parents, options, blockName) +
+      '  return _output;\n' +
+      '})()';
+
+  if (args[args.length - 1] === ')') {
+    args.pop();
+  }
+
+  args = (args.length) ? ', ' + args.join('') : '';
+  return '_output += _filters["' + filter + '"](' + val + args + ');\n';
+};
+
+exports.parse = function (str, line, parser, types) {
+  var filter;
+
+  function check(filter) {
+    if (!filters.hasOwnProperty(filter)) {
+      throw new Error('Filter "' + filter + '" does not exist on line ' + line + '.');
+    }
+  }
+
+  parser.on(types.FUNCTION, function (token) {
+    if (!filter) {
+      filter = token.match.replace(/\($/, '');
+      check(filter);
+      this.out.push(token.match);
+      this.state.push(token.type);
+      return;
+    }
+    return true;
+  });
+
+  parser.on(types.VAR, function (token) {
+    if (!filter) {
+      filter = token.match;
+      check(filter);
+      this.out.push(filter);
+      return;
+    }
+    return true;
+  });
+
+  return true;
+};
+
+exports.ends = true;
+
+},{"../filters":52}],65:[function(require,module,exports){
+var ctx = '_ctx.',
+  ctxloop = ctx + 'loop';
+
+/**
+ * Loop over objects and arrays.
+ *
+ * @alias for
+ *
+ * @example
+ * // obj = { one: 'hi', two: 'bye' };
+ * {% for x in obj %}
+ *   {% if loop.first %}<ul>{% endif %}
+ *   <li>{{ loop.index }} - {{ loop.key }}: {{ x }}</li>
+ *   {% if loop.last %}</ul>{% endif %}
+ * {% endfor %}
+ * // => <ul>
+ * //    <li>1 - one: hi</li>
+ * //    <li>2 - two: bye</li>
+ * //    </ul>
+ *
+ * @example
+ * // arr = [1, 2, 3]
+ * // Reverse the array, shortcut the key/index to `key`
+ * {% for key, val in arr|reverse %}
+ * {{ key }} -- {{ val }}
+ * {% endfor %}
+ * // => 0 -- 3
+ * //    1 -- 2
+ * //    2 -- 1
+ *
+ * @param {literal} [key]     A shortcut to the index of the array or current key accessor.
+ * @param {literal} variable  The current value will be assigned to this variable name temporarily. The variable will be reset upon ending the for tag.
+ * @param {literal} in        Literally, "in". This token is required.
+ * @param {object}  object    An enumerable object that will be iterated over.
+ *
+ * @return {loop.index} The current iteration of the loop (1-indexed)
+ * @return {loop.index0} The current iteration of the loop (0-indexed)
+ * @return {loop.revindex} The number of iterations from the end of the loop (1-indexed)
+ * @return {loop.revindex0} The number of iterations from the end of the loop (0-indexed)
+ * @return {loop.key} If the iterator is an object, this will be the key of the current item, otherwise it will be the same as the loop.index.
+ * @return {loop.first} True if the current object is the first in the object or array.
+ * @return {loop.last} True if the current object is the last in the object or array.
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  var val = args.shift(),
+    key = '__k',
+    ctxloopcache = (ctx + '__loopcache' + Math.random()).replace(/\./g, ''),
+    last;
+
+  if (args[0] && args[0] === ',') {
+    args.shift();
+    key = val;
+    val = args.shift();
+  }
+
+  last = args.join('');
+
+  return [
+    '(function () {\n',
+    '  var __l = ' + last + ', __len = (_utils.isArray(__l) || typeof __l === "string") ? __l.length : _utils.keys(__l).length;\n',
+    '  if (!__l) { return; }\n',
+    '    var ' + ctxloopcache + ' = { loop: ' + ctxloop + ', ' + val + ': ' + ctx + val + ', ' + key + ': ' + ctx + key + ' };\n',
+    '    ' + ctxloop + ' = { first: false, index: 1, index0: 0, revindex: __len, revindex0: __len - 1, length: __len, last: false };\n',
+    '  _utils.each(__l, function (' + val + ', ' + key + ') {\n',
+    '    ' + ctx + val + ' = ' + val + ';\n',
+    '    ' + ctx + key + ' = ' + key + ';\n',
+    '    ' + ctxloop + '.key = ' + key + ';\n',
+    '    ' + ctxloop + '.first = (' + ctxloop + '.index0 === 0);\n',
+    '    ' + ctxloop + '.last = (' + ctxloop + '.revindex0 === 0);\n',
+    '    ' + compiler(content, parents, options, blockName),
+    '    ' + ctxloop + '.index += 1; ' + ctxloop + '.index0 += 1; ' + ctxloop + '.revindex -= 1; ' + ctxloop + '.revindex0 -= 1;\n',
+    '  });\n',
+    '  ' + ctxloop + ' = ' + ctxloopcache + '.loop;\n',
+    '  ' + ctx + val + ' = ' + ctxloopcache + '.' + val + ';\n',
+    '  ' + ctx + key + ' = ' + ctxloopcache + '.' + key + ';\n',
+    '  ' + ctxloopcache + ' = undefined;\n',
+    '})();\n'
+  ].join('');
+};
+
+exports.parse = function (str, line, parser, types) {
+  var firstVar, ready;
+
+  parser.on(types.NUMBER, function (token) {
+    var lastState = this.state.length ? this.state[this.state.length - 1] : null;
+    if (!ready ||
+        (lastState !== types.ARRAYOPEN &&
+          lastState !== types.CURLYOPEN &&
+          lastState !== types.CURLYCLOSE &&
+          lastState !== types.FUNCTION &&
+          lastState !== types.FILTER)
+        ) {
+      throw new Error('Unexpected number "' + token.match + '" on line ' + line + '.');
+    }
+    return true;
+  });
+
+  parser.on(types.VAR, function (token) {
+    if (ready && firstVar) {
+      return true;
+    }
+
+    if (!this.out.length) {
+      firstVar = true;
+    }
+
+    this.out.push(token.match);
+  });
+
+  parser.on(types.COMMA, function (token) {
+    if (firstVar && this.prevToken.type === types.VAR) {
+      this.out.push(token.match);
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.COMPARATOR, function (token) {
+    if (token.match !== 'in' || !firstVar) {
+      throw new Error('Unexpected token "' + token.match + '" on line ' + line + '.');
+    }
+    ready = true;
+    this.filterApplyIdx.push(this.out.length);
+  });
+
+  return true;
+};
+
+exports.ends = true;
+
+},{}],66:[function(require,module,exports){
+/**
+ * Used to create conditional statements in templates. Accepts most JavaScript valid comparisons.
+ *
+ * Can be used in conjunction with <a href="#elseif"><code data-language="swig">{% elseif ... %}</code></a> and <a href="#else"><code data-language="swig">{% else %}</code></a> tags.
+ *
+ * @alias if
+ *
+ * @example
+ * {% if x %}{% endif %}
+ * {% if !x %}{% endif %}
+ * {% if not x %}{% endif %}
+ *
+ * @example
+ * {% if x and y %}{% endif %}
+ * {% if x && y %}{% endif %}
+ * {% if x or y %}{% endif %}
+ * {% if x || y %}{% endif %}
+ * {% if x || (y && z) %}{% endif %}
+ *
+ * @example
+ * {% if x [operator] y %}
+ *   Operators: ==, !=, <, <=, >, >=, ===, !==
+ * {% endif %}
+ *
+ * @example
+ * {% if x == 'five' %}
+ *   The operands can be also be string or number literals
+ * {% endif %}
+ *
+ * @example
+ * {% if x|lower === 'tacos' %}
+ *   You can use filters on any operand in the statement.
+ * {% endif %}
+ *
+ * @example
+ * {% if x in y %}
+ *   If x is a value that is present in y, this will return true.
+ * {% endif %}
+ *
+ * @param {...mixed} conditional Conditional statement that returns a truthy or falsy value.
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  return 'if (' + args.join(' ') + ') { \n' +
+    compiler(content, parents, options, blockName) + '\n' +
+    '}';
+};
+
+exports.parse = function (str, line, parser, types) {
+  if (typeof str === "undefined") {
+    throw new Error('No conditional statement provided on line ' + line + '.');
+  }
+
+  parser.on(types.COMPARATOR, function (token) {
+    if (this.isLast) {
+      throw new Error('Unexpected logic "' + token.match + '" on line ' + line + '.');
+    }
+    if (this.prevToken.type === types.NOT) {
+      throw new Error('Attempted logic "not ' + token.match + '" on line ' + line + '. Use !(foo ' + token.match + ') instead.');
+    }
+    this.out.push(token.match);
+    this.filterApplyIdx.push(this.out.length);
+  });
+
+  parser.on(types.NOT, function (token) {
+    if (this.isLast) {
+      throw new Error('Unexpected logic "' + token.match + '" on line ' + line + '.');
+    }
+    this.out.push(token.match);
+  });
+
+  parser.on(types.BOOL, function (token) {
+    this.out.push(token.match);
+  });
+
+  parser.on(types.LOGIC, function (token) {
+    if (!this.out.length || this.isLast) {
+      throw new Error('Unexpected logic "' + token.match + '" on line ' + line + '.');
+    }
+    this.out.push(token.match);
+    this.filterApplyIdx.pop();
+  });
+
+  return true;
+};
+
+exports.ends = true;
+
+},{}],67:[function(require,module,exports){
+var utils = require('../utils');
+
+/**
+ * Allows you to import macros from another file directly into your current context.
+ * The import tag is specifically designed for importing macros into your template with a specific context scope. This is very useful for keeping your macros from overriding template context that is being injected by your server-side page generation.
+ *
+ * @alias import
+ *
+ * @example
+ * {% import './formmacros.html' as forms %}
+ * {{ form.input("text", "name") }}
+ * // => <input type="text" name="name">
+ *
+ * @example
+ * {% import "../shared/tags.html" as tags %}
+ * {{ tags.stylesheet('global') }}
+ * // => <link rel="stylesheet" href="/global.css">
+ *
+ * @param {string|var}  file      Relative path from the current template file to the file to import macros from.
+ * @param {literal}     as        Literally, "as".
+ * @param {literal}     varname   Local-accessible object name to assign the macros to.
+ */
+exports.compile = function (compiler, args) {
+  var ctx = args.pop(),
+    out = '_ctx.' + ctx + ' = {};\n  var _output = "";\n',
+    replacements = utils.map(args, function (arg) {
+      return {
+        ex: new RegExp('_ctx.' + arg.name, 'g'),
+        re: '_ctx.' + ctx + '.' + arg.name
+      };
+    });
+
+  // Replace all occurrences of all macros in this file with
+  // proper namespaced definitions and calls
+  utils.each(args, function (arg) {
+    var c = arg.compiled;
+    utils.each(replacements, function (re) {
+      c = c.replace(re.ex, re.re);
+    });
+    out += c;
+  });
+
+  return out;
+};
+
+exports.parse = function (str, line, parser, types, stack, opts, swig) {
+  var compiler = require('../parser').compile,
+    parseOpts = { resolveFrom: opts.filename },
+    compileOpts = utils.extend({}, opts, parseOpts),
+    tokens,
+    ctx;
+
+  parser.on(types.STRING, function (token) {
+    var self = this;
+    if (!tokens) {
+      tokens = swig.parseFile(token.match.replace(/^("|')|("|')$/g, ''), parseOpts).tokens;
+      utils.each(tokens, function (token) {
+        var out = '',
+          macroName;
+        if (!token || token.name !== 'macro' || !token.compile) {
+          return;
+        }
+        macroName = token.args[0];
+        out += token.compile(compiler, token.args, token.content, [], compileOpts) + '\n';
+        self.out.push({compiled: out, name: macroName});
+      });
+      return;
+    }
+
+    throw new Error('Unexpected string ' + token.match + ' on line ' + line + '.');
+  });
+
+  parser.on(types.VAR, function (token) {
+    var self = this;
+    if (!tokens || ctx) {
+      throw new Error('Unexpected variable "' + token.match + '" on line ' + line + '.');
+    }
+
+    if (token.match === 'as') {
+      return;
+    }
+
+    ctx = token.match;
+    self.out.push(ctx);
+    return false;
+  });
+
+  return true;
+};
+
+exports.block = true;
+
+},{"../parser":57,"../utils":75}],68:[function(require,module,exports){
+var ignore = 'ignore',
+  missing = 'missing',
+  only = 'only';
+
+/**
+ * Includes a template partial in place. The template is rendered within the current locals variable context.
+ *
+ * @alias include
+ *
+ * @example
+ * // food = 'burritos';
+ * // drink = 'lemonade';
+ * {% include "./partial.html" %}
+ * // => I like burritos and lemonade.
+ *
+ * @example
+ * // my_obj = { food: 'tacos', drink: 'horchata' };
+ * {% include "./partial.html" with my_obj only %}
+ * // => I like tacos and horchata.
+ *
+ * @example
+ * {% include "/this/file/does/not/exist" ignore missing %}
+ * // => (Nothing! empty string)
+ *
+ * @param {string|var}  file      The path, relative to the template root, to render into the current context.
+ * @param {literal}     [with]    Literally, "with".
+ * @param {object}      [context] Local variable key-value object context to provide to the included file.
+ * @param {literal}     [only]    Restricts to <strong>only</strong> passing the <code>with context</code> as local variables–the included template will not be aware of any other local variables in the parent template. For best performance, usage of this option is recommended if possible.
+ * @param {literal}     [ignore missing] Will output empty string if not found instead of throwing an error.
+ */
+exports.compile = function (compiler, args) {
+  var file = args.shift(),
+    onlyIdx = args.indexOf(only),
+    onlyCtx = onlyIdx !== -1 ? args.splice(onlyIdx, 1) : false,
+    parentFile = (args.pop() || '').replace(/\\/g, '\\\\'),
+    ignore = args[args.length - 1] === missing ? (args.pop()) : false,
+    w = args.join('');
+
+  return (ignore ? '  try {\n' : '') +
+    '_output += _swig.compileFile(' + file + ', {' +
+    'resolveFrom: "' + parentFile + '"' +
+    '})(' +
+    ((onlyCtx && w) ? w : (!w ? '_ctx' : '_utils.extend({}, _ctx, ' + w + ')')) +
+    ');\n' +
+    (ignore ? '} catch (e) {}\n' : '');
+};
+
+exports.parse = function (str, line, parser, types, stack, opts) {
+  var file, w;
+  parser.on(types.STRING, function (token) {
+    if (!file) {
+      file = token.match;
+      this.out.push(file);
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.VAR, function (token) {
+    if (!file) {
+      file = token.match;
+      return true;
+    }
+
+    if (!w && token.match === 'with') {
+      w = true;
+      return;
+    }
+
+    if (w && token.match === only && this.prevToken.match !== 'with') {
+      this.out.push(token.match);
+      return;
+    }
+
+    if (token.match === ignore) {
+      return false;
+    }
+
+    if (token.match === missing) {
+      if (this.prevToken.match !== ignore) {
+        throw new Error('Unexpected token "' + missing + '" on line ' + line + '.');
+      }
+      this.out.push(token.match);
+      return false;
+    }
+
+    if (this.prevToken.match === ignore) {
+      throw new Error('Expected "' + missing + '" on line ' + line + ' but found "' + token.match + '".');
+    }
+
+    return true;
+  });
+
+  parser.on('end', function () {
+    this.out.push(opts.filename || null);
+  });
+
+  return true;
+};
+
+},{}],69:[function(require,module,exports){
+exports.autoescape = require('./autoescape');
+exports.block = require('./block');
+exports["else"] = require('./else');
+exports.elseif = require('./elseif');
+exports.elif = exports.elseif;
+exports["extends"] = require('./extends');
+exports.filter = require('./filter');
+exports["for"] = require('./for');
+exports["if"] = require('./if');
+exports["import"] = require('./import');
+exports.include = require('./include');
+exports.macro = require('./macro');
+exports.parent = require('./parent');
+exports.raw = require('./raw');
+exports.set = require('./set');
+exports.spaceless = require('./spaceless');
+
+},{"./autoescape":59,"./block":60,"./else":61,"./elseif":62,"./extends":63,"./filter":64,"./for":65,"./if":66,"./import":67,"./include":68,"./macro":70,"./parent":71,"./raw":72,"./set":73,"./spaceless":74}],70:[function(require,module,exports){
+/**
+ * Create custom, reusable snippets within your templates.
+ * Can be imported from one template to another using the <a href="#import"><code data-language="swig">{% import ... %}</code></a> tag.
+ *
+ * @alias macro
+ *
+ * @example
+ * {% macro input(type, name, id, label, value, error) %}
+ *   <label for="{{ name }}">{{ label }}</label>
+ *   <input type="{{ type }}" name="{{ name }}" id="{{ id }}" value="{{ value }}"{% if error %} class="error"{% endif %}>
+ * {% endmacro %}
+ *
+ * {{ input("text", "fname", "fname", "First Name", fname.value, fname.errors) }}
+ * // => <label for="fname">First Name</label>
+ * //    <input type="text" name="fname" id="fname" value="">
+ *
+ * @param {...arguments} arguments  User-defined arguments.
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  var fnName = args.shift();
+
+  return '_ctx.' + fnName + ' = function (' + args.join('') + ') {\n' +
+    '  var _output = "",\n' +
+    '    __ctx = _utils.extend({}, _ctx);\n' +
+    '  _utils.each(_ctx, function (v, k) {\n' +
+    '    if (["' + args.join('","') + '"].indexOf(k) !== -1) { delete _ctx[k]; }\n' +
+    '  });\n' +
+    compiler(content, parents, options, blockName) + '\n' +
+    ' _ctx = _utils.extend(_ctx, __ctx);\n' +
+    '  return _output;\n' +
+    '};\n' +
+    '_ctx.' + fnName + '.safe = true;\n';
+};
+
+exports.parse = function (str, line, parser, types) {
+  var name;
+
+  parser.on(types.VAR, function (token) {
+    if (token.match.indexOf('.') !== -1) {
+      throw new Error('Unexpected dot in macro argument "' + token.match + '" on line ' + line + '.');
+    }
+    this.out.push(token.match);
+  });
+
+  parser.on(types.FUNCTION, function (token) {
+    if (!name) {
+      name = token.match;
+      this.out.push(name);
+      this.state.push(types.FUNCTION);
+    }
+  });
+
+  parser.on(types.FUNCTIONEMPTY, function (token) {
+    if (!name) {
+      name = token.match;
+      this.out.push(name);
+    }
+  });
+
+  parser.on(types.PARENCLOSE, function () {
+    if (this.isLast) {
+      return;
+    }
+    throw new Error('Unexpected parenthesis close on line ' + line + '.');
+  });
+
+  parser.on(types.COMMA, function () {
+    return true;
+  });
+
+  parser.on('*', function () {
+    return;
+  });
+
+  return true;
+};
+
+exports.ends = true;
+exports.block = true;
+
+},{}],71:[function(require,module,exports){
+/**
+ * Inject the content from the parent template's block of the same name into the current block.
+ *
+ * See <a href="#inheritance">Template Inheritance</a> for more information.
+ *
+ * @alias parent
+ *
+ * @example
+ * {% extends "./foo.html" %}
+ * {% block content %}
+ *   My content.
+ *   {% parent %}
+ * {% endblock %}
+ *
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  if (!parents || !parents.length) {
+    return '';
+  }
+
+  var parentFile = args[0],
+    breaker = true,
+    l = parents.length,
+    i = 0,
+    parent,
+    block;
+
+  for (i; i < l; i += 1) {
+    parent = parents[i];
+    if (!parent.blocks || !parent.blocks.hasOwnProperty(blockName)) {
+      continue;
+    }
+    // Silly JSLint "Strange Loop" requires return to be in a conditional
+    if (breaker && parentFile !== parent.name) {
+      block = parent.blocks[blockName];
+      return block.compile(compiler, [blockName], block.content, parents.slice(i + 1), options) + '\n';
+    }
+  }
+};
+
+exports.parse = function (str, line, parser, types, stack, opts) {
+  parser.on('*', function (token) {
+    throw new Error('Unexpected argument "' + token.match + '" on line ' + line + '.');
+  });
+
+  parser.on('end', function () {
+    this.out.push(opts.filename);
+  });
+
+  return true;
+};
+
+},{}],72:[function(require,module,exports){
+// Magic tag, hardcoded into parser
+
+/**
+ * Forces the content to not be auto-escaped. All swig instructions will be ignored and the content will be rendered exactly as it was given.
+ *
+ * @alias raw
+ *
+ * @example
+ * // foobar = '<p>'
+ * {% raw %}{{ foobar }}{% endraw %}
+ * // => {{ foobar }}
+ *
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  return compiler(content, parents, options, blockName);
+};
+exports.parse = function (str, line, parser) {
+  parser.on('*', function (token) {
+    throw new Error('Unexpected token "' + token.match + '" in raw tag on line ' + line + '.');
+  });
+  return true;
+};
+exports.ends = true;
+
+},{}],73:[function(require,module,exports){
+/**
+ * Set a variable for re-use in the current context. This will over-write any value already set to the context for the given <var>varname</var>.
+ *
+ * @alias set
+ *
+ * @example
+ * {% set foo = "anything!" %}
+ * {{ foo }}
+ * // => anything!
+ *
+ * @example
+ * // index = 2;
+ * {% set bar = 1 %}
+ * {% set bar += index|default(3) %}
+ * // => 3
+ *
+ * @example
+ * // foods = {};
+ * // food = 'chili';
+ * {% set foods[food] = "con queso" %}
+ * {{ foods.chili }}
+ * // => con queso
+ *
+ * @example
+ * // foods = { chili: 'chili con queso' }
+ * {% set foods.chili = "guatamalan insanity pepper" %}
+ * {{ foods.chili }}
+ * // => guatamalan insanity pepper
+ *
+ * @param {literal} varname   The variable name to assign the value to.
+ * @param {literal} assignement   Any valid JavaScript assignement. <code data-language="js">=, +=, *=, /=, -=</code>
+ * @param {*}   value     Valid variable output.
+ */
+exports.compile = function (compiler, args) {
+  return args.join(' ') + ';\n';
+};
+
+exports.parse = function (str, line, parser, types) {
+  var nameSet = '',
+    propertyName;
+
+  parser.on(types.VAR, function (token) {
+    if (propertyName) {
+      // Tell the parser where to find the variable
+      propertyName += '_ctx.' + token.match;
+      return;
+    }
+
+    if (!parser.out.length) {
+      nameSet += token.match;
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.BRACKETOPEN, function (token) {
+    if (!propertyName && !this.out.length) {
+      propertyName = token.match;
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.STRING, function (token) {
+    if (propertyName && !this.out.length) {
+      propertyName += token.match;
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.BRACKETCLOSE, function (token) {
+    if (propertyName && !this.out.length) {
+      nameSet += propertyName + token.match;
+      propertyName = undefined;
+      return;
+    }
+
+    return true;
+  });
+
+  parser.on(types.DOTKEY, function (token) {
+    if (!propertyName && !nameSet) {
+      return true;
+    }
+    nameSet += '.' + token.match;
+    return;
+  });
+
+  parser.on(types.ASSIGNMENT, function (token) {
+    if (this.out.length || !nameSet) {
+      throw new Error('Unexpected assignment "' + token.match + '" on line ' + line + '.');
+    }
+
+    this.out.push(
+      // Prevent the set from spilling into global scope
+      '_ctx.' + nameSet
+    );
+    this.out.push(token.match);
+    this.filterApplyIdx.push(this.out.length);
+  });
+
+  return true;
+};
+
+exports.block = true;
+
+},{}],74:[function(require,module,exports){
+var utils = require('../utils');
+
+/**
+ * Attempts to remove whitespace between HTML tags. Use at your own risk.
+ *
+ * @alias spaceless
+ *
+ * @example
+ * {% spaceless %}
+ *   {% for num in foo %}
+ *   <li>{{ loop.index }}</li>
+ *   {% endfor %}
+ * {% endspaceless %}
+ * // => <li>1</li><li>2</li><li>3</li>
+ *
+ */
+exports.compile = function (compiler, args, content, parents, options, blockName) {
+  function stripWhitespace(tokens) {
+    return utils.map(tokens, function (token) {
+      if (token.content || typeof token !== 'string') {
+        token.content = stripWhitespace(token.content);
+        return token;
+      }
+
+      return token.replace(/^\s+/, '')
+        .replace(/>\s+</g, '><')
+        .replace(/\s+$/, '');
+    });
+  }
+
+  return compiler(stripWhitespace(content), parents, options, blockName);
+};
+
+exports.parse = function (str, line, parser) {
+  parser.on('*', function (token) {
+    throw new Error('Unexpected token "' + token.match + '" on line ' + line + '.');
+  });
+
+  return true;
+};
+
+exports.ends = true;
+
+},{"../utils":75}],75:[function(require,module,exports){
+var isArray;
+
+/**
+ * Strip leading and trailing whitespace from a string.
+ * @param  {string} input
+ * @return {string}       Stripped input.
+ */
+exports.strip = function (input) {
+  return input.replace(/^\s+|\s+$/g, '');
+};
+
+/**
+ * Test if a string starts with a given prefix.
+ * @param  {string} str    String to test against.
+ * @param  {string} prefix Prefix to check for.
+ * @return {boolean}
+ */
+exports.startsWith = function (str, prefix) {
+  return str.indexOf(prefix) === 0;
+};
+
+/**
+ * Test if a string ends with a given suffix.
+ * @param  {string} str    String to test against.
+ * @param  {string} suffix Suffix to check for.
+ * @return {boolean}
+ */
+exports.endsWith = function (str, suffix) {
+  return str.indexOf(suffix, str.length - suffix.length) !== -1;
+};
+
+/**
+ * Iterate over an array or object.
+ * @param  {array|object} obj Enumerable object.
+ * @param  {Function}     fn  Callback function executed for each item.
+ * @return {array|object}     The original input object.
+ */
+exports.each = function (obj, fn) {
+  var i, l;
+
+  if (isArray(obj)) {
+    i = 0;
+    l = obj.length;
+    for (i; i < l; i += 1) {
+      if (fn(obj[i], i, obj) === false) {
+        break;
+      }
+    }
+  } else {
+    for (i in obj) {
+      if (obj.hasOwnProperty(i)) {
+        if (fn(obj[i], i, obj) === false) {
+          break;
+        }
+      }
+    }
+  }
+
+  return obj;
+};
+
+/**
+ * Test if an object is an Array.
+ * @param {object} obj
+ * @return {boolean}
+ */
+exports.isArray = isArray = (Array.hasOwnProperty('isArray')) ? Array.isArray : function (obj) {
+  return (obj) ? (typeof obj === 'object' && Object.prototype.toString.call(obj).indexOf() !== -1) : false;
+};
+
+/**
+ * Test if an item in an enumerable matches your conditions.
+ * @param  {array|object}   obj   Enumerable object.
+ * @param  {Function}       fn    Executed for each item. Return true if your condition is met.
+ * @return {boolean}
+ */
+exports.some = function (obj, fn) {
+  var i = 0,
+    result,
+    l;
+  if (isArray(obj)) {
+    l = obj.length;
+
+    for (i; i < l; i += 1) {
+      result = fn(obj[i], i, obj);
+      if (result) {
+        break;
+      }
+    }
+  } else {
+    exports.each(obj, function (value, index) {
+      result = fn(value, index, obj);
+      return !(result);
+    });
+  }
+  return !!result;
+};
+
+/**
+ * Return a new enumerable, mapped by a given iteration function.
+ * @param  {object}   obj Enumerable object.
+ * @param  {Function} fn  Executed for each item. Return the item to replace the original item with.
+ * @return {object}       New mapped object.
+ */
+exports.map = function (obj, fn) {
+  var i = 0,
+    result = [],
+    l;
+
+  if (isArray(obj)) {
+    l = obj.length;
+    for (i; i < l; i += 1) {
+      result[i] = fn(obj[i], i);
+    }
+  } else {
+    for (i in obj) {
+      if (obj.hasOwnProperty(i)) {
+        result[i] = fn(obj[i], i);
+      }
+    }
+  }
+  return result;
+};
+
+/**
+ * Copy all of the properties in the source objects over to the destination object, and return the destination object. It's in-order, so the last source will override properties of the same name in previous arguments.
+ * @param {...object} arguments
+ * @return {object}
+ */
+exports.extend = function () {
+  var args = arguments,
+    target = args[0],
+    objs = (args.length > 1) ? Array.prototype.slice.call(args, 1) : [],
+    i = 0,
+    l = objs.length,
+    key,
+    obj;
+
+  for (i; i < l; i += 1) {
+    obj = objs[i] || {};
+    for (key in obj) {
+      if (obj.hasOwnProperty(key)) {
+        target[key] = obj[key];
+      }
+    }
+  }
+  return target;
+};
+
+/**
+ * Get all of the keys on an object.
+ * @param  {object} obj
+ * @return {array}
+ */
+exports.keys = function (obj) {
+  if (!obj) {
+    return [];
+  }
+
+  if (Object.keys) {
+    return Object.keys(obj);
+  }
+
+  return exports.map(obj, function (v, k) {
+    return k;
+  });
+};
+
+/**
+ * Throw an error with possible line number and source file.
+ * @param  {string} message Error message
+ * @param  {number} [line]  Line number in template.
+ * @param  {string} [file]  Template file the error occured in.
+ * @throws {Error} No seriously, the point is to throw an error.
+ */
+exports.throwError = function (message, line, file) {
+  if (line) {
+    message += ' on line ' + line;
+  }
+  if (file) {
+    message += ' in file ' + file;
+  }
+  throw new Error(message + '.');
+};
+
+},{}],76:[function(require,module,exports){
+/* Browserify  Require and Template demo
+ */
+var elem = document.querySelector('.browserify1');
 elem.style.display = 'block'
-elem.style.backgroundColor = '#EBCEEB'
 
 var elem2 = document.querySelector('.browserify2');
 elem2.style.display = 'block'
-elem2.style.backgroundColor = '#EBCEEB'
+
+var elem3 = document.querySelector('.browserify3');
+elem3.style.display = 'block'
+
+var elem4 = document.querySelector('.browserify4');
+elem4.style.display = 'block'
 
 var stories = [{name:'1',body:'first'},{name:2,body:'second'}]
 
-
-
 var _ = require('lodash');
 // _.templateSettings.interpolate = /{{([\s\S]+?)}}/g; // XXX Change This can not parse '('
-var render = _.template(require('tpl/test.tpl'));
-elem.innerHTML = render({name:'browserify with lodash template engine',stories:stories});
+var lo_tpl, lo_html
+lo_tpl = _.template(require('tpl/lodash.tpl'));
+lo_html = lo_tpl({name:'browserify:lodash template',stories:stories});
+elem.innerHTML = lo_html
 
 var Handlebars = require('handlebars');
-var template = Handlebars.compile(require('tpl/handlebars.tpl'));
-elem2.innerHTML = template({name:'browserify with handlebars template engine', stories: stories});
+var ha_tpl, ha_html
+ha_tpl = Handlebars.compile(require('tpl/handlebars.tpl'));
+ha_html = ha_tpl({name:'browserify:handlebars template', stories: stories});
+elem2.innerHTML = ha_html
 
-},{"handlebars":33,"lodash":46,"tpl/handlebars.tpl":48,"tpl/test.tpl":49}],48:[function(require,module,exports){
-module.exports = "<div>Hello {{ name }}</div>\n<div>\n{{#each stories }}\n    <span >{{ name}}</span>\n    <span style='font-size:0.5em;'> {{ body }}</span>\n{{/each}}\n{{#if true }}\n    true\n{{/if}}\n</div>\n";
+var art = require('art-template');
+var ar_tpl, ar_html
+ar_tpl = art.compile(require('tpl/art_template.tpl'));
+ar_html = ar_tpl({name:'browserify:art_template', stories: stories});
+elem3.innerHTML = ar_html
 
-},{}],49:[function(require,module,exports){
-module.exports = "<div>Hello <%- name %></div>\n<div>\n<% _.forEach(stories, function(story) { %>\n    <span><%- story.name %></span>\n    <span style='font-size:0.5em;'> <%- story.body %></span>\n<% }); %>\n<% if (3 == 3) { %>\n    true\n<% } %>\n</div>\n";
+var swig = require('swig');
+var sw_tpl, sw_html
+sw_tpl = swig.compile(require('tpl/swig.tpl'));
+sw_html = sw_tpl({name:'browserify:swig template', stories: stories});
+elem4.innerHTML = sw_html
 
-},{}]},{},[47]);
+var $ = require('../webpack/lib/jquery')
+
+if (window.Worker) {
+    var myWorker = new Worker("js/worker2.js");
+    myWorker.onmessage = function(e){
+        if (typeof e.data == 'object') {
+            $('.' + e.data.name + ' div').append('<span class="log">' + e.data.time + 'ms :' + e.data.num + ' times</span>')
+        } else {
+            console.log(e.data)
+        }
+    }
+}
+
+},{"../webpack/lib/jquery":81,"art-template":3,"handlebars":36,"lodash":49,"swig":50,"tpl/art_template.tpl":77,"tpl/handlebars.tpl":78,"tpl/lodash.tpl":79,"tpl/swig.tpl":80}],77:[function(require,module,exports){
+module.exports = "<div>\nHello {{ name }} ::\n{{each stories as story i}}\n    <span >{{ story.name}}</span>\n    <span style='font-size:0.5em;'> {{ story.body }}</span>\n{{/each}}\n{{if 33>3 }}\n    true\n{{/if}}\n</div>\n";
+
+},{}],78:[function(require,module,exports){
+module.exports = "<div>\nHello {{ name }} ::\n{{#each stories }}\n    <span >{{ name}}</span>\n    <span style='font-size:0.5em;'> {{ body }}</span>\n{{/each}}\n{{#if true }}\n    true\n{{/if}}\n</div>\n";
+
+},{}],79:[function(require,module,exports){
+module.exports = "<div>Hello <%- name %> ::\n<% _.forEach(stories, function(story) { %>\n    <span><%- story.name %></span>\n    <span style='font-size:0.5em;'> <%- story.body %></span>\n<% }); %>\n<% if (3 == 3) { %>\n    true\n<% } %>\n</div>\n";
+
+},{}],80:[function(require,module,exports){
+module.exports = "<div>\nHello {{ name }} ::\n{% for story in stories %}\n    <span >{{ story.name}}</span>\n    <span style='font-size:0.5em;'> {{ story.body }}</span>\n{% endfor %}\n{% if 33>3 %}\n    true\n{% endif %}\n</div>\n";
+
+},{}],81:[function(require,module,exports){
+/*! jQuery v2.1.4 | (c) 2005, 2015 jQuery Foundation, Inc. | jquery.org/license */
+!function(a,b){"object"==typeof module&&"object"==typeof module.exports?module.exports=a.document?b(a,!0):function(a){if(!a.document)throw new Error("jQuery requires a window with a document");return b(a)}:b(a)}("undefined"!=typeof window?window:this,function(a,b){var c=[],d=c.slice,e=c.concat,f=c.push,g=c.indexOf,h={},i=h.toString,j=h.hasOwnProperty,k={},l=a.document,m="2.1.4",n=function(a,b){return new n.fn.init(a,b)},o=/^[\s\uFEFF\xA0]+|[\s\uFEFF\xA0]+$/g,p=/^-ms-/,q=/-([\da-z])/gi,r=function(a,b){return b.toUpperCase()};n.fn=n.prototype={jquery:m,constructor:n,selector:"",length:0,toArray:function(){return d.call(this)},get:function(a){return null!=a?0>a?this[a+this.length]:this[a]:d.call(this)},pushStack:function(a){var b=n.merge(this.constructor(),a);return b.prevObject=this,b.context=this.context,b},each:function(a,b){return n.each(this,a,b)},map:function(a){return this.pushStack(n.map(this,function(b,c){return a.call(b,c,b)}))},slice:function(){return this.pushStack(d.apply(this,arguments))},first:function(){return this.eq(0)},last:function(){return this.eq(-1)},eq:function(a){var b=this.length,c=+a+(0>a?b:0);return this.pushStack(c>=0&&b>c?[this[c]]:[])},end:function(){return this.prevObject||this.constructor(null)},push:f,sort:c.sort,splice:c.splice},n.extend=n.fn.extend=function(){var a,b,c,d,e,f,g=arguments[0]||{},h=1,i=arguments.length,j=!1;for("boolean"==typeof g&&(j=g,g=arguments[h]||{},h++),"object"==typeof g||n.isFunction(g)||(g={}),h===i&&(g=this,h--);i>h;h++)if(null!=(a=arguments[h]))for(b in a)c=g[b],d=a[b],g!==d&&(j&&d&&(n.isPlainObject(d)||(e=n.isArray(d)))?(e?(e=!1,f=c&&n.isArray(c)?c:[]):f=c&&n.isPlainObject(c)?c:{},g[b]=n.extend(j,f,d)):void 0!==d&&(g[b]=d));return g},n.extend({expando:"jQuery"+(m+Math.random()).replace(/\D/g,""),isReady:!0,error:function(a){throw new Error(a)},noop:function(){},isFunction:function(a){return"function"===n.type(a)},isArray:Array.isArray,isWindow:function(a){return null!=a&&a===a.window},isNumeric:function(a){return!n.isArray(a)&&a-parseFloat(a)+1>=0},isPlainObject:function(a){return"object"!==n.type(a)||a.nodeType||n.isWindow(a)?!1:a.constructor&&!j.call(a.constructor.prototype,"isPrototypeOf")?!1:!0},isEmptyObject:function(a){var b;for(b in a)return!1;return!0},type:function(a){return null==a?a+"":"object"==typeof a||"function"==typeof a?h[i.call(a)]||"object":typeof a},globalEval:function(a){var b,c=eval;a=n.trim(a),a&&(1===a.indexOf("use strict")?(b=l.createElement("script"),b.text=a,l.head.appendChild(b).parentNode.removeChild(b)):c(a))},camelCase:function(a){return a.replace(p,"ms-").replace(q,r)},nodeName:function(a,b){return a.nodeName&&a.nodeName.toLowerCase()===b.toLowerCase()},each:function(a,b,c){var d,e=0,f=a.length,g=s(a);if(c){if(g){for(;f>e;e++)if(d=b.apply(a[e],c),d===!1)break}else for(e in a)if(d=b.apply(a[e],c),d===!1)break}else if(g){for(;f>e;e++)if(d=b.call(a[e],e,a[e]),d===!1)break}else for(e in a)if(d=b.call(a[e],e,a[e]),d===!1)break;return a},trim:function(a){return null==a?"":(a+"").replace(o,"")},makeArray:function(a,b){var c=b||[];return null!=a&&(s(Object(a))?n.merge(c,"string"==typeof a?[a]:a):f.call(c,a)),c},inArray:function(a,b,c){return null==b?-1:g.call(b,a,c)},merge:function(a,b){for(var c=+b.length,d=0,e=a.length;c>d;d++)a[e++]=b[d];return a.length=e,a},grep:function(a,b,c){for(var d,e=[],f=0,g=a.length,h=!c;g>f;f++)d=!b(a[f],f),d!==h&&e.push(a[f]);return e},map:function(a,b,c){var d,f=0,g=a.length,h=s(a),i=[];if(h)for(;g>f;f++)d=b(a[f],f,c),null!=d&&i.push(d);else for(f in a)d=b(a[f],f,c),null!=d&&i.push(d);return e.apply([],i)},guid:1,proxy:function(a,b){var c,e,f;return"string"==typeof b&&(c=a[b],b=a,a=c),n.isFunction(a)?(e=d.call(arguments,2),f=function(){return a.apply(b||this,e.concat(d.call(arguments)))},f.guid=a.guid=a.guid||n.guid++,f):void 0},now:Date.now,support:k}),n.each("Boolean Number String Function Array Date RegExp Object Error".split(" "),function(a,b){h["[object "+b+"]"]=b.toLowerCase()});function s(a){var b="length"in a&&a.length,c=n.type(a);return"function"===c||n.isWindow(a)?!1:1===a.nodeType&&b?!0:"array"===c||0===b||"number"==typeof b&&b>0&&b-1 in a}var t=function(a){var b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u="sizzle"+1*new Date,v=a.document,w=0,x=0,y=ha(),z=ha(),A=ha(),B=function(a,b){return a===b&&(l=!0),0},C=1<<31,D={}.hasOwnProperty,E=[],F=E.pop,G=E.push,H=E.push,I=E.slice,J=function(a,b){for(var c=0,d=a.length;d>c;c++)if(a[c]===b)return c;return-1},K="checked|selected|async|autofocus|autoplay|controls|defer|disabled|hidden|ismap|loop|multiple|open|readonly|required|scoped",L="[\\x20\\t\\r\\n\\f]",M="(?:\\\\.|[\\w-]|[^\\x00-\\xa0])+",N=M.replace("w","w#"),O="\\["+L+"*("+M+")(?:"+L+"*([*^$|!~]?=)"+L+"*(?:'((?:\\\\.|[^\\\\'])*)'|\"((?:\\\\.|[^\\\\\"])*)\"|("+N+"))|)"+L+"*\\]",P=":("+M+")(?:\\((('((?:\\\\.|[^\\\\'])*)'|\"((?:\\\\.|[^\\\\\"])*)\")|((?:\\\\.|[^\\\\()[\\]]|"+O+")*)|.*)\\)|)",Q=new RegExp(L+"+","g"),R=new RegExp("^"+L+"+|((?:^|[^\\\\])(?:\\\\.)*)"+L+"+$","g"),S=new RegExp("^"+L+"*,"+L+"*"),T=new RegExp("^"+L+"*([>+~]|"+L+")"+L+"*"),U=new RegExp("="+L+"*([^\\]'\"]*?)"+L+"*\\]","g"),V=new RegExp(P),W=new RegExp("^"+N+"$"),X={ID:new RegExp("^#("+M+")"),CLASS:new RegExp("^\\.("+M+")"),TAG:new RegExp("^("+M.replace("w","w*")+")"),ATTR:new RegExp("^"+O),PSEUDO:new RegExp("^"+P),CHILD:new RegExp("^:(only|first|last|nth|nth-last)-(child|of-type)(?:\\("+L+"*(even|odd|(([+-]|)(\\d*)n|)"+L+"*(?:([+-]|)"+L+"*(\\d+)|))"+L+"*\\)|)","i"),bool:new RegExp("^(?:"+K+")$","i"),needsContext:new RegExp("^"+L+"*[>+~]|:(even|odd|eq|gt|lt|nth|first|last)(?:\\("+L+"*((?:-\\d)?\\d*)"+L+"*\\)|)(?=[^-]|$)","i")},Y=/^(?:input|select|textarea|button)$/i,Z=/^h\d$/i,$=/^[^{]+\{\s*\[native \w/,_=/^(?:#([\w-]+)|(\w+)|\.([\w-]+))$/,aa=/[+~]/,ba=/'|\\/g,ca=new RegExp("\\\\([\\da-f]{1,6}"+L+"?|("+L+")|.)","ig"),da=function(a,b,c){var d="0x"+b-65536;return d!==d||c?b:0>d?String.fromCharCode(d+65536):String.fromCharCode(d>>10|55296,1023&d|56320)},ea=function(){m()};try{H.apply(E=I.call(v.childNodes),v.childNodes),E[v.childNodes.length].nodeType}catch(fa){H={apply:E.length?function(a,b){G.apply(a,I.call(b))}:function(a,b){var c=a.length,d=0;while(a[c++]=b[d++]);a.length=c-1}}}function ga(a,b,d,e){var f,h,j,k,l,o,r,s,w,x;if((b?b.ownerDocument||b:v)!==n&&m(b),b=b||n,d=d||[],k=b.nodeType,"string"!=typeof a||!a||1!==k&&9!==k&&11!==k)return d;if(!e&&p){if(11!==k&&(f=_.exec(a)))if(j=f[1]){if(9===k){if(h=b.getElementById(j),!h||!h.parentNode)return d;if(h.id===j)return d.push(h),d}else if(b.ownerDocument&&(h=b.ownerDocument.getElementById(j))&&t(b,h)&&h.id===j)return d.push(h),d}else{if(f[2])return H.apply(d,b.getElementsByTagName(a)),d;if((j=f[3])&&c.getElementsByClassName)return H.apply(d,b.getElementsByClassName(j)),d}if(c.qsa&&(!q||!q.test(a))){if(s=r=u,w=b,x=1!==k&&a,1===k&&"object"!==b.nodeName.toLowerCase()){o=g(a),(r=b.getAttribute("id"))?s=r.replace(ba,"\\$&"):b.setAttribute("id",s),s="[id='"+s+"'] ",l=o.length;while(l--)o[l]=s+ra(o[l]);w=aa.test(a)&&pa(b.parentNode)||b,x=o.join(",")}if(x)try{return H.apply(d,w.querySelectorAll(x)),d}catch(y){}finally{r||b.removeAttribute("id")}}}return i(a.replace(R,"$1"),b,d,e)}function ha(){var a=[];function b(c,e){return a.push(c+" ")>d.cacheLength&&delete b[a.shift()],b[c+" "]=e}return b}function ia(a){return a[u]=!0,a}function ja(a){var b=n.createElement("div");try{return!!a(b)}catch(c){return!1}finally{b.parentNode&&b.parentNode.removeChild(b),b=null}}function ka(a,b){var c=a.split("|"),e=a.length;while(e--)d.attrHandle[c[e]]=b}function la(a,b){var c=b&&a,d=c&&1===a.nodeType&&1===b.nodeType&&(~b.sourceIndex||C)-(~a.sourceIndex||C);if(d)return d;if(c)while(c=c.nextSibling)if(c===b)return-1;return a?1:-1}function ma(a){return function(b){var c=b.nodeName.toLowerCase();return"input"===c&&b.type===a}}function na(a){return function(b){var c=b.nodeName.toLowerCase();return("input"===c||"button"===c)&&b.type===a}}function oa(a){return ia(function(b){return b=+b,ia(function(c,d){var e,f=a([],c.length,b),g=f.length;while(g--)c[e=f[g]]&&(c[e]=!(d[e]=c[e]))})})}function pa(a){return a&&"undefined"!=typeof a.getElementsByTagName&&a}c=ga.support={},f=ga.isXML=function(a){var b=a&&(a.ownerDocument||a).documentElement;return b?"HTML"!==b.nodeName:!1},m=ga.setDocument=function(a){var b,e,g=a?a.ownerDocument||a:v;return g!==n&&9===g.nodeType&&g.documentElement?(n=g,o=g.documentElement,e=g.defaultView,e&&e!==e.top&&(e.addEventListener?e.addEventListener("unload",ea,!1):e.attachEvent&&e.attachEvent("onunload",ea)),p=!f(g),c.attributes=ja(function(a){return a.className="i",!a.getAttribute("className")}),c.getElementsByTagName=ja(function(a){return a.appendChild(g.createComment("")),!a.getElementsByTagName("*").length}),c.getElementsByClassName=$.test(g.getElementsByClassName),c.getById=ja(function(a){return o.appendChild(a).id=u,!g.getElementsByName||!g.getElementsByName(u).length}),c.getById?(d.find.ID=function(a,b){if("undefined"!=typeof b.getElementById&&p){var c=b.getElementById(a);return c&&c.parentNode?[c]:[]}},d.filter.ID=function(a){var b=a.replace(ca,da);return function(a){return a.getAttribute("id")===b}}):(delete d.find.ID,d.filter.ID=function(a){var b=a.replace(ca,da);return function(a){var c="undefined"!=typeof a.getAttributeNode&&a.getAttributeNode("id");return c&&c.value===b}}),d.find.TAG=c.getElementsByTagName?function(a,b){return"undefined"!=typeof b.getElementsByTagName?b.getElementsByTagName(a):c.qsa?b.querySelectorAll(a):void 0}:function(a,b){var c,d=[],e=0,f=b.getElementsByTagName(a);if("*"===a){while(c=f[e++])1===c.nodeType&&d.push(c);return d}return f},d.find.CLASS=c.getElementsByClassName&&function(a,b){return p?b.getElementsByClassName(a):void 0},r=[],q=[],(c.qsa=$.test(g.querySelectorAll))&&(ja(function(a){o.appendChild(a).innerHTML="<a id='"+u+"'></a><select id='"+u+"-\f]' msallowcapture=''><option selected=''></option></select>",a.querySelectorAll("[msallowcapture^='']").length&&q.push("[*^$]="+L+"*(?:''|\"\")"),a.querySelectorAll("[selected]").length||q.push("\\["+L+"*(?:value|"+K+")"),a.querySelectorAll("[id~="+u+"-]").length||q.push("~="),a.querySelectorAll(":checked").length||q.push(":checked"),a.querySelectorAll("a#"+u+"+*").length||q.push(".#.+[+~]")}),ja(function(a){var b=g.createElement("input");b.setAttribute("type","hidden"),a.appendChild(b).setAttribute("name","D"),a.querySelectorAll("[name=d]").length&&q.push("name"+L+"*[*^$|!~]?="),a.querySelectorAll(":enabled").length||q.push(":enabled",":disabled"),a.querySelectorAll("*,:x"),q.push(",.*:")})),(c.matchesSelector=$.test(s=o.matches||o.webkitMatchesSelector||o.mozMatchesSelector||o.oMatchesSelector||o.msMatchesSelector))&&ja(function(a){c.disconnectedMatch=s.call(a,"div"),s.call(a,"[s!='']:x"),r.push("!=",P)}),q=q.length&&new RegExp(q.join("|")),r=r.length&&new RegExp(r.join("|")),b=$.test(o.compareDocumentPosition),t=b||$.test(o.contains)?function(a,b){var c=9===a.nodeType?a.documentElement:a,d=b&&b.parentNode;return a===d||!(!d||1!==d.nodeType||!(c.contains?c.contains(d):a.compareDocumentPosition&&16&a.compareDocumentPosition(d)))}:function(a,b){if(b)while(b=b.parentNode)if(b===a)return!0;return!1},B=b?function(a,b){if(a===b)return l=!0,0;var d=!a.compareDocumentPosition-!b.compareDocumentPosition;return d?d:(d=(a.ownerDocument||a)===(b.ownerDocument||b)?a.compareDocumentPosition(b):1,1&d||!c.sortDetached&&b.compareDocumentPosition(a)===d?a===g||a.ownerDocument===v&&t(v,a)?-1:b===g||b.ownerDocument===v&&t(v,b)?1:k?J(k,a)-J(k,b):0:4&d?-1:1)}:function(a,b){if(a===b)return l=!0,0;var c,d=0,e=a.parentNode,f=b.parentNode,h=[a],i=[b];if(!e||!f)return a===g?-1:b===g?1:e?-1:f?1:k?J(k,a)-J(k,b):0;if(e===f)return la(a,b);c=a;while(c=c.parentNode)h.unshift(c);c=b;while(c=c.parentNode)i.unshift(c);while(h[d]===i[d])d++;return d?la(h[d],i[d]):h[d]===v?-1:i[d]===v?1:0},g):n},ga.matches=function(a,b){return ga(a,null,null,b)},ga.matchesSelector=function(a,b){if((a.ownerDocument||a)!==n&&m(a),b=b.replace(U,"='$1']"),!(!c.matchesSelector||!p||r&&r.test(b)||q&&q.test(b)))try{var d=s.call(a,b);if(d||c.disconnectedMatch||a.document&&11!==a.document.nodeType)return d}catch(e){}return ga(b,n,null,[a]).length>0},ga.contains=function(a,b){return(a.ownerDocument||a)!==n&&m(a),t(a,b)},ga.attr=function(a,b){(a.ownerDocument||a)!==n&&m(a);var e=d.attrHandle[b.toLowerCase()],f=e&&D.call(d.attrHandle,b.toLowerCase())?e(a,b,!p):void 0;return void 0!==f?f:c.attributes||!p?a.getAttribute(b):(f=a.getAttributeNode(b))&&f.specified?f.value:null},ga.error=function(a){throw new Error("Syntax error, unrecognized expression: "+a)},ga.uniqueSort=function(a){var b,d=[],e=0,f=0;if(l=!c.detectDuplicates,k=!c.sortStable&&a.slice(0),a.sort(B),l){while(b=a[f++])b===a[f]&&(e=d.push(f));while(e--)a.splice(d[e],1)}return k=null,a},e=ga.getText=function(a){var b,c="",d=0,f=a.nodeType;if(f){if(1===f||9===f||11===f){if("string"==typeof a.textContent)return a.textContent;for(a=a.firstChild;a;a=a.nextSibling)c+=e(a)}else if(3===f||4===f)return a.nodeValue}else while(b=a[d++])c+=e(b);return c},d=ga.selectors={cacheLength:50,createPseudo:ia,match:X,attrHandle:{},find:{},relative:{">":{dir:"parentNode",first:!0}," ":{dir:"parentNode"},"+":{dir:"previousSibling",first:!0},"~":{dir:"previousSibling"}},preFilter:{ATTR:function(a){return a[1]=a[1].replace(ca,da),a[3]=(a[3]||a[4]||a[5]||"").replace(ca,da),"~="===a[2]&&(a[3]=" "+a[3]+" "),a.slice(0,4)},CHILD:function(a){return a[1]=a[1].toLowerCase(),"nth"===a[1].slice(0,3)?(a[3]||ga.error(a[0]),a[4]=+(a[4]?a[5]+(a[6]||1):2*("even"===a[3]||"odd"===a[3])),a[5]=+(a[7]+a[8]||"odd"===a[3])):a[3]&&ga.error(a[0]),a},PSEUDO:function(a){var b,c=!a[6]&&a[2];return X.CHILD.test(a[0])?null:(a[3]?a[2]=a[4]||a[5]||"":c&&V.test(c)&&(b=g(c,!0))&&(b=c.indexOf(")",c.length-b)-c.length)&&(a[0]=a[0].slice(0,b),a[2]=c.slice(0,b)),a.slice(0,3))}},filter:{TAG:function(a){var b=a.replace(ca,da).toLowerCase();return"*"===a?function(){return!0}:function(a){return a.nodeName&&a.nodeName.toLowerCase()===b}},CLASS:function(a){var b=y[a+" "];return b||(b=new RegExp("(^|"+L+")"+a+"("+L+"|$)"))&&y(a,function(a){return b.test("string"==typeof a.className&&a.className||"undefined"!=typeof a.getAttribute&&a.getAttribute("class")||"")})},ATTR:function(a,b,c){return function(d){var e=ga.attr(d,a);return null==e?"!="===b:b?(e+="","="===b?e===c:"!="===b?e!==c:"^="===b?c&&0===e.indexOf(c):"*="===b?c&&e.indexOf(c)>-1:"$="===b?c&&e.slice(-c.length)===c:"~="===b?(" "+e.replace(Q," ")+" ").indexOf(c)>-1:"|="===b?e===c||e.slice(0,c.length+1)===c+"-":!1):!0}},CHILD:function(a,b,c,d,e){var f="nth"!==a.slice(0,3),g="last"!==a.slice(-4),h="of-type"===b;return 1===d&&0===e?function(a){return!!a.parentNode}:function(b,c,i){var j,k,l,m,n,o,p=f!==g?"nextSibling":"previousSibling",q=b.parentNode,r=h&&b.nodeName.toLowerCase(),s=!i&&!h;if(q){if(f){while(p){l=b;while(l=l[p])if(h?l.nodeName.toLowerCase()===r:1===l.nodeType)return!1;o=p="only"===a&&!o&&"nextSibling"}return!0}if(o=[g?q.firstChild:q.lastChild],g&&s){k=q[u]||(q[u]={}),j=k[a]||[],n=j[0]===w&&j[1],m=j[0]===w&&j[2],l=n&&q.childNodes[n];while(l=++n&&l&&l[p]||(m=n=0)||o.pop())if(1===l.nodeType&&++m&&l===b){k[a]=[w,n,m];break}}else if(s&&(j=(b[u]||(b[u]={}))[a])&&j[0]===w)m=j[1];else while(l=++n&&l&&l[p]||(m=n=0)||o.pop())if((h?l.nodeName.toLowerCase()===r:1===l.nodeType)&&++m&&(s&&((l[u]||(l[u]={}))[a]=[w,m]),l===b))break;return m-=e,m===d||m%d===0&&m/d>=0}}},PSEUDO:function(a,b){var c,e=d.pseudos[a]||d.setFilters[a.toLowerCase()]||ga.error("unsupported pseudo: "+a);return e[u]?e(b):e.length>1?(c=[a,a,"",b],d.setFilters.hasOwnProperty(a.toLowerCase())?ia(function(a,c){var d,f=e(a,b),g=f.length;while(g--)d=J(a,f[g]),a[d]=!(c[d]=f[g])}):function(a){return e(a,0,c)}):e}},pseudos:{not:ia(function(a){var b=[],c=[],d=h(a.replace(R,"$1"));return d[u]?ia(function(a,b,c,e){var f,g=d(a,null,e,[]),h=a.length;while(h--)(f=g[h])&&(a[h]=!(b[h]=f))}):function(a,e,f){return b[0]=a,d(b,null,f,c),b[0]=null,!c.pop()}}),has:ia(function(a){return function(b){return ga(a,b).length>0}}),contains:ia(function(a){return a=a.replace(ca,da),function(b){return(b.textContent||b.innerText||e(b)).indexOf(a)>-1}}),lang:ia(function(a){return W.test(a||"")||ga.error("unsupported lang: "+a),a=a.replace(ca,da).toLowerCase(),function(b){var c;do if(c=p?b.lang:b.getAttribute("xml:lang")||b.getAttribute("lang"))return c=c.toLowerCase(),c===a||0===c.indexOf(a+"-");while((b=b.parentNode)&&1===b.nodeType);return!1}}),target:function(b){var c=a.location&&a.location.hash;return c&&c.slice(1)===b.id},root:function(a){return a===o},focus:function(a){return a===n.activeElement&&(!n.hasFocus||n.hasFocus())&&!!(a.type||a.href||~a.tabIndex)},enabled:function(a){return a.disabled===!1},disabled:function(a){return a.disabled===!0},checked:function(a){var b=a.nodeName.toLowerCase();return"input"===b&&!!a.checked||"option"===b&&!!a.selected},selected:function(a){return a.parentNode&&a.parentNode.selectedIndex,a.selected===!0},empty:function(a){for(a=a.firstChild;a;a=a.nextSibling)if(a.nodeType<6)return!1;return!0},parent:function(a){return!d.pseudos.empty(a)},header:function(a){return Z.test(a.nodeName)},input:function(a){return Y.test(a.nodeName)},button:function(a){var b=a.nodeName.toLowerCase();return"input"===b&&"button"===a.type||"button"===b},text:function(a){var b;return"input"===a.nodeName.toLowerCase()&&"text"===a.type&&(null==(b=a.getAttribute("type"))||"text"===b.toLowerCase())},first:oa(function(){return[0]}),last:oa(function(a,b){return[b-1]}),eq:oa(function(a,b,c){return[0>c?c+b:c]}),even:oa(function(a,b){for(var c=0;b>c;c+=2)a.push(c);return a}),odd:oa(function(a,b){for(var c=1;b>c;c+=2)a.push(c);return a}),lt:oa(function(a,b,c){for(var d=0>c?c+b:c;--d>=0;)a.push(d);return a}),gt:oa(function(a,b,c){for(var d=0>c?c+b:c;++d<b;)a.push(d);return a})}},d.pseudos.nth=d.pseudos.eq;for(b in{radio:!0,checkbox:!0,file:!0,password:!0,image:!0})d.pseudos[b]=ma(b);for(b in{submit:!0,reset:!0})d.pseudos[b]=na(b);function qa(){}qa.prototype=d.filters=d.pseudos,d.setFilters=new qa,g=ga.tokenize=function(a,b){var c,e,f,g,h,i,j,k=z[a+" "];if(k)return b?0:k.slice(0);h=a,i=[],j=d.preFilter;while(h){(!c||(e=S.exec(h)))&&(e&&(h=h.slice(e[0].length)||h),i.push(f=[])),c=!1,(e=T.exec(h))&&(c=e.shift(),f.push({value:c,type:e[0].replace(R," ")}),h=h.slice(c.length));for(g in d.filter)!(e=X[g].exec(h))||j[g]&&!(e=j[g](e))||(c=e.shift(),f.push({value:c,type:g,matches:e}),h=h.slice(c.length));if(!c)break}return b?h.length:h?ga.error(a):z(a,i).slice(0)};function ra(a){for(var b=0,c=a.length,d="";c>b;b++)d+=a[b].value;return d}function sa(a,b,c){var d=b.dir,e=c&&"parentNode"===d,f=x++;return b.first?function(b,c,f){while(b=b[d])if(1===b.nodeType||e)return a(b,c,f)}:function(b,c,g){var h,i,j=[w,f];if(g){while(b=b[d])if((1===b.nodeType||e)&&a(b,c,g))return!0}else while(b=b[d])if(1===b.nodeType||e){if(i=b[u]||(b[u]={}),(h=i[d])&&h[0]===w&&h[1]===f)return j[2]=h[2];if(i[d]=j,j[2]=a(b,c,g))return!0}}}function ta(a){return a.length>1?function(b,c,d){var e=a.length;while(e--)if(!a[e](b,c,d))return!1;return!0}:a[0]}function ua(a,b,c){for(var d=0,e=b.length;e>d;d++)ga(a,b[d],c);return c}function va(a,b,c,d,e){for(var f,g=[],h=0,i=a.length,j=null!=b;i>h;h++)(f=a[h])&&(!c||c(f,d,e))&&(g.push(f),j&&b.push(h));return g}function wa(a,b,c,d,e,f){return d&&!d[u]&&(d=wa(d)),e&&!e[u]&&(e=wa(e,f)),ia(function(f,g,h,i){var j,k,l,m=[],n=[],o=g.length,p=f||ua(b||"*",h.nodeType?[h]:h,[]),q=!a||!f&&b?p:va(p,m,a,h,i),r=c?e||(f?a:o||d)?[]:g:q;if(c&&c(q,r,h,i),d){j=va(r,n),d(j,[],h,i),k=j.length;while(k--)(l=j[k])&&(r[n[k]]=!(q[n[k]]=l))}if(f){if(e||a){if(e){j=[],k=r.length;while(k--)(l=r[k])&&j.push(q[k]=l);e(null,r=[],j,i)}k=r.length;while(k--)(l=r[k])&&(j=e?J(f,l):m[k])>-1&&(f[j]=!(g[j]=l))}}else r=va(r===g?r.splice(o,r.length):r),e?e(null,g,r,i):H.apply(g,r)})}function xa(a){for(var b,c,e,f=a.length,g=d.relative[a[0].type],h=g||d.relative[" "],i=g?1:0,k=sa(function(a){return a===b},h,!0),l=sa(function(a){return J(b,a)>-1},h,!0),m=[function(a,c,d){var e=!g&&(d||c!==j)||((b=c).nodeType?k(a,c,d):l(a,c,d));return b=null,e}];f>i;i++)if(c=d.relative[a[i].type])m=[sa(ta(m),c)];else{if(c=d.filter[a[i].type].apply(null,a[i].matches),c[u]){for(e=++i;f>e;e++)if(d.relative[a[e].type])break;return wa(i>1&&ta(m),i>1&&ra(a.slice(0,i-1).concat({value:" "===a[i-2].type?"*":""})).replace(R,"$1"),c,e>i&&xa(a.slice(i,e)),f>e&&xa(a=a.slice(e)),f>e&&ra(a))}m.push(c)}return ta(m)}function ya(a,b){var c=b.length>0,e=a.length>0,f=function(f,g,h,i,k){var l,m,o,p=0,q="0",r=f&&[],s=[],t=j,u=f||e&&d.find.TAG("*",k),v=w+=null==t?1:Math.random()||.1,x=u.length;for(k&&(j=g!==n&&g);q!==x&&null!=(l=u[q]);q++){if(e&&l){m=0;while(o=a[m++])if(o(l,g,h)){i.push(l);break}k&&(w=v)}c&&((l=!o&&l)&&p--,f&&r.push(l))}if(p+=q,c&&q!==p){m=0;while(o=b[m++])o(r,s,g,h);if(f){if(p>0)while(q--)r[q]||s[q]||(s[q]=F.call(i));s=va(s)}H.apply(i,s),k&&!f&&s.length>0&&p+b.length>1&&ga.uniqueSort(i)}return k&&(w=v,j=t),r};return c?ia(f):f}return h=ga.compile=function(a,b){var c,d=[],e=[],f=A[a+" "];if(!f){b||(b=g(a)),c=b.length;while(c--)f=xa(b[c]),f[u]?d.push(f):e.push(f);f=A(a,ya(e,d)),f.selector=a}return f},i=ga.select=function(a,b,e,f){var i,j,k,l,m,n="function"==typeof a&&a,o=!f&&g(a=n.selector||a);if(e=e||[],1===o.length){if(j=o[0]=o[0].slice(0),j.length>2&&"ID"===(k=j[0]).type&&c.getById&&9===b.nodeType&&p&&d.relative[j[1].type]){if(b=(d.find.ID(k.matches[0].replace(ca,da),b)||[])[0],!b)return e;n&&(b=b.parentNode),a=a.slice(j.shift().value.length)}i=X.needsContext.test(a)?0:j.length;while(i--){if(k=j[i],d.relative[l=k.type])break;if((m=d.find[l])&&(f=m(k.matches[0].replace(ca,da),aa.test(j[0].type)&&pa(b.parentNode)||b))){if(j.splice(i,1),a=f.length&&ra(j),!a)return H.apply(e,f),e;break}}}return(n||h(a,o))(f,b,!p,e,aa.test(a)&&pa(b.parentNode)||b),e},c.sortStable=u.split("").sort(B).join("")===u,c.detectDuplicates=!!l,m(),c.sortDetached=ja(function(a){return 1&a.compareDocumentPosition(n.createElement("div"))}),ja(function(a){return a.innerHTML="<a href='#'></a>","#"===a.firstChild.getAttribute("href")})||ka("type|href|height|width",function(a,b,c){return c?void 0:a.getAttribute(b,"type"===b.toLowerCase()?1:2)}),c.attributes&&ja(function(a){return a.innerHTML="<input/>",a.firstChild.setAttribute("value",""),""===a.firstChild.getAttribute("value")})||ka("value",function(a,b,c){return c||"input"!==a.nodeName.toLowerCase()?void 0:a.defaultValue}),ja(function(a){return null==a.getAttribute("disabled")})||ka(K,function(a,b,c){var d;return c?void 0:a[b]===!0?b.toLowerCase():(d=a.getAttributeNode(b))&&d.specified?d.value:null}),ga}(a);n.find=t,n.expr=t.selectors,n.expr[":"]=n.expr.pseudos,n.unique=t.uniqueSort,n.text=t.getText,n.isXMLDoc=t.isXML,n.contains=t.contains;var u=n.expr.match.needsContext,v=/^<(\w+)\s*\/?>(?:<\/\1>|)$/,w=/^.[^:#\[\.,]*$/;function x(a,b,c){if(n.isFunction(b))return n.grep(a,function(a,d){return!!b.call(a,d,a)!==c});if(b.nodeType)return n.grep(a,function(a){return a===b!==c});if("string"==typeof b){if(w.test(b))return n.filter(b,a,c);b=n.filter(b,a)}return n.grep(a,function(a){return g.call(b,a)>=0!==c})}n.filter=function(a,b,c){var d=b[0];return c&&(a=":not("+a+")"),1===b.length&&1===d.nodeType?n.find.matchesSelector(d,a)?[d]:[]:n.find.matches(a,n.grep(b,function(a){return 1===a.nodeType}))},n.fn.extend({find:function(a){var b,c=this.length,d=[],e=this;if("string"!=typeof a)return this.pushStack(n(a).filter(function(){for(b=0;c>b;b++)if(n.contains(e[b],this))return!0}));for(b=0;c>b;b++)n.find(a,e[b],d);return d=this.pushStack(c>1?n.unique(d):d),d.selector=this.selector?this.selector+" "+a:a,d},filter:function(a){return this.pushStack(x(this,a||[],!1))},not:function(a){return this.pushStack(x(this,a||[],!0))},is:function(a){return!!x(this,"string"==typeof a&&u.test(a)?n(a):a||[],!1).length}});var y,z=/^(?:\s*(<[\w\W]+>)[^>]*|#([\w-]*))$/,A=n.fn.init=function(a,b){var c,d;if(!a)return this;if("string"==typeof a){if(c="<"===a[0]&&">"===a[a.length-1]&&a.length>=3?[null,a,null]:z.exec(a),!c||!c[1]&&b)return!b||b.jquery?(b||y).find(a):this.constructor(b).find(a);if(c[1]){if(b=b instanceof n?b[0]:b,n.merge(this,n.parseHTML(c[1],b&&b.nodeType?b.ownerDocument||b:l,!0)),v.test(c[1])&&n.isPlainObject(b))for(c in b)n.isFunction(this[c])?this[c](b[c]):this.attr(c,b[c]);return this}return d=l.getElementById(c[2]),d&&d.parentNode&&(this.length=1,this[0]=d),this.context=l,this.selector=a,this}return a.nodeType?(this.context=this[0]=a,this.length=1,this):n.isFunction(a)?"undefined"!=typeof y.ready?y.ready(a):a(n):(void 0!==a.selector&&(this.selector=a.selector,this.context=a.context),n.makeArray(a,this))};A.prototype=n.fn,y=n(l);var B=/^(?:parents|prev(?:Until|All))/,C={children:!0,contents:!0,next:!0,prev:!0};n.extend({dir:function(a,b,c){var d=[],e=void 0!==c;while((a=a[b])&&9!==a.nodeType)if(1===a.nodeType){if(e&&n(a).is(c))break;d.push(a)}return d},sibling:function(a,b){for(var c=[];a;a=a.nextSibling)1===a.nodeType&&a!==b&&c.push(a);return c}}),n.fn.extend({has:function(a){var b=n(a,this),c=b.length;return this.filter(function(){for(var a=0;c>a;a++)if(n.contains(this,b[a]))return!0})},closest:function(a,b){for(var c,d=0,e=this.length,f=[],g=u.test(a)||"string"!=typeof a?n(a,b||this.context):0;e>d;d++)for(c=this[d];c&&c!==b;c=c.parentNode)if(c.nodeType<11&&(g?g.index(c)>-1:1===c.nodeType&&n.find.matchesSelector(c,a))){f.push(c);break}return this.pushStack(f.length>1?n.unique(f):f)},index:function(a){return a?"string"==typeof a?g.call(n(a),this[0]):g.call(this,a.jquery?a[0]:a):this[0]&&this[0].parentNode?this.first().prevAll().length:-1},add:function(a,b){return this.pushStack(n.unique(n.merge(this.get(),n(a,b))))},addBack:function(a){return this.add(null==a?this.prevObject:this.prevObject.filter(a))}});function D(a,b){while((a=a[b])&&1!==a.nodeType);return a}n.each({parent:function(a){var b=a.parentNode;return b&&11!==b.nodeType?b:null},parents:function(a){return n.dir(a,"parentNode")},parentsUntil:function(a,b,c){return n.dir(a,"parentNode",c)},next:function(a){return D(a,"nextSibling")},prev:function(a){return D(a,"previousSibling")},nextAll:function(a){return n.dir(a,"nextSibling")},prevAll:function(a){return n.dir(a,"previousSibling")},nextUntil:function(a,b,c){return n.dir(a,"nextSibling",c)},prevUntil:function(a,b,c){return n.dir(a,"previousSibling",c)},siblings:function(a){return n.sibling((a.parentNode||{}).firstChild,a)},children:function(a){return n.sibling(a.firstChild)},contents:function(a){return a.contentDocument||n.merge([],a.childNodes)}},function(a,b){n.fn[a]=function(c,d){var e=n.map(this,b,c);return"Until"!==a.slice(-5)&&(d=c),d&&"string"==typeof d&&(e=n.filter(d,e)),this.length>1&&(C[a]||n.unique(e),B.test(a)&&e.reverse()),this.pushStack(e)}});var E=/\S+/g,F={};function G(a){var b=F[a]={};return n.each(a.match(E)||[],function(a,c){b[c]=!0}),b}n.Callbacks=function(a){a="string"==typeof a?F[a]||G(a):n.extend({},a);var b,c,d,e,f,g,h=[],i=!a.once&&[],j=function(l){for(b=a.memory&&l,c=!0,g=e||0,e=0,f=h.length,d=!0;h&&f>g;g++)if(h[g].apply(l[0],l[1])===!1&&a.stopOnFalse){b=!1;break}d=!1,h&&(i?i.length&&j(i.shift()):b?h=[]:k.disable())},k={add:function(){if(h){var c=h.length;!function g(b){n.each(b,function(b,c){var d=n.type(c);"function"===d?a.unique&&k.has(c)||h.push(c):c&&c.length&&"string"!==d&&g(c)})}(arguments),d?f=h.length:b&&(e=c,j(b))}return this},remove:function(){return h&&n.each(arguments,function(a,b){var c;while((c=n.inArray(b,h,c))>-1)h.splice(c,1),d&&(f>=c&&f--,g>=c&&g--)}),this},has:function(a){return a?n.inArray(a,h)>-1:!(!h||!h.length)},empty:function(){return h=[],f=0,this},disable:function(){return h=i=b=void 0,this},disabled:function(){return!h},lock:function(){return i=void 0,b||k.disable(),this},locked:function(){return!i},fireWith:function(a,b){return!h||c&&!i||(b=b||[],b=[a,b.slice?b.slice():b],d?i.push(b):j(b)),this},fire:function(){return k.fireWith(this,arguments),this},fired:function(){return!!c}};return k},n.extend({Deferred:function(a){var b=[["resolve","done",n.Callbacks("once memory"),"resolved"],["reject","fail",n.Callbacks("once memory"),"rejected"],["notify","progress",n.Callbacks("memory")]],c="pending",d={state:function(){return c},always:function(){return e.done(arguments).fail(arguments),this},then:function(){var a=arguments;return n.Deferred(function(c){n.each(b,function(b,f){var g=n.isFunction(a[b])&&a[b];e[f[1]](function(){var a=g&&g.apply(this,arguments);a&&n.isFunction(a.promise)?a.promise().done(c.resolve).fail(c.reject).progress(c.notify):c[f[0]+"With"](this===d?c.promise():this,g?[a]:arguments)})}),a=null}).promise()},promise:function(a){return null!=a?n.extend(a,d):d}},e={};return d.pipe=d.then,n.each(b,function(a,f){var g=f[2],h=f[3];d[f[1]]=g.add,h&&g.add(function(){c=h},b[1^a][2].disable,b[2][2].lock),e[f[0]]=function(){return e[f[0]+"With"](this===e?d:this,arguments),this},e[f[0]+"With"]=g.fireWith}),d.promise(e),a&&a.call(e,e),e},when:function(a){var b=0,c=d.call(arguments),e=c.length,f=1!==e||a&&n.isFunction(a.promise)?e:0,g=1===f?a:n.Deferred(),h=function(a,b,c){return function(e){b[a]=this,c[a]=arguments.length>1?d.call(arguments):e,c===i?g.notifyWith(b,c):--f||g.resolveWith(b,c)}},i,j,k;if(e>1)for(i=new Array(e),j=new Array(e),k=new Array(e);e>b;b++)c[b]&&n.isFunction(c[b].promise)?c[b].promise().done(h(b,k,c)).fail(g.reject).progress(h(b,j,i)):--f;return f||g.resolveWith(k,c),g.promise()}});var H;n.fn.ready=function(a){return n.ready.promise().done(a),this},n.extend({isReady:!1,readyWait:1,holdReady:function(a){a?n.readyWait++:n.ready(!0)},ready:function(a){(a===!0?--n.readyWait:n.isReady)||(n.isReady=!0,a!==!0&&--n.readyWait>0||(H.resolveWith(l,[n]),n.fn.triggerHandler&&(n(l).triggerHandler("ready"),n(l).off("ready"))))}});function I(){l.removeEventListener("DOMContentLoaded",I,!1),a.removeEventListener("load",I,!1),n.ready()}n.ready.promise=function(b){return H||(H=n.Deferred(),"complete"===l.readyState?setTimeout(n.ready):(l.addEventListener("DOMContentLoaded",I,!1),a.addEventListener("load",I,!1))),H.promise(b)},n.ready.promise();var J=n.access=function(a,b,c,d,e,f,g){var h=0,i=a.length,j=null==c;if("object"===n.type(c)){e=!0;for(h in c)n.access(a,b,h,c[h],!0,f,g)}else if(void 0!==d&&(e=!0,n.isFunction(d)||(g=!0),j&&(g?(b.call(a,d),b=null):(j=b,b=function(a,b,c){return j.call(n(a),c)})),b))for(;i>h;h++)b(a[h],c,g?d:d.call(a[h],h,b(a[h],c)));return e?a:j?b.call(a):i?b(a[0],c):f};n.acceptData=function(a){return 1===a.nodeType||9===a.nodeType||!+a.nodeType};function K(){Object.defineProperty(this.cache={},0,{get:function(){return{}}}),this.expando=n.expando+K.uid++}K.uid=1,K.accepts=n.acceptData,K.prototype={key:function(a){if(!K.accepts(a))return 0;var b={},c=a[this.expando];if(!c){c=K.uid++;try{b[this.expando]={value:c},Object.defineProperties(a,b)}catch(d){b[this.expando]=c,n.extend(a,b)}}return this.cache[c]||(this.cache[c]={}),c},set:function(a,b,c){var d,e=this.key(a),f=this.cache[e];if("string"==typeof b)f[b]=c;else if(n.isEmptyObject(f))n.extend(this.cache[e],b);else for(d in b)f[d]=b[d];return f},get:function(a,b){var c=this.cache[this.key(a)];return void 0===b?c:c[b]},access:function(a,b,c){var d;return void 0===b||b&&"string"==typeof b&&void 0===c?(d=this.get(a,b),void 0!==d?d:this.get(a,n.camelCase(b))):(this.set(a,b,c),void 0!==c?c:b)},remove:function(a,b){var c,d,e,f=this.key(a),g=this.cache[f];if(void 0===b)this.cache[f]={};else{n.isArray(b)?d=b.concat(b.map(n.camelCase)):(e=n.camelCase(b),b in g?d=[b,e]:(d=e,d=d in g?[d]:d.match(E)||[])),c=d.length;while(c--)delete g[d[c]]}},hasData:function(a){return!n.isEmptyObject(this.cache[a[this.expando]]||{})},discard:function(a){a[this.expando]&&delete this.cache[a[this.expando]]}};var L=new K,M=new K,N=/^(?:\{[\w\W]*\}|\[[\w\W]*\])$/,O=/([A-Z])/g;function P(a,b,c){var d;if(void 0===c&&1===a.nodeType)if(d="data-"+b.replace(O,"-$1").toLowerCase(),c=a.getAttribute(d),"string"==typeof c){try{c="true"===c?!0:"false"===c?!1:"null"===c?null:+c+""===c?+c:N.test(c)?n.parseJSON(c):c}catch(e){}M.set(a,b,c)}else c=void 0;return c}n.extend({hasData:function(a){return M.hasData(a)||L.hasData(a)},data:function(a,b,c){
+return M.access(a,b,c)},removeData:function(a,b){M.remove(a,b)},_data:function(a,b,c){return L.access(a,b,c)},_removeData:function(a,b){L.remove(a,b)}}),n.fn.extend({data:function(a,b){var c,d,e,f=this[0],g=f&&f.attributes;if(void 0===a){if(this.length&&(e=M.get(f),1===f.nodeType&&!L.get(f,"hasDataAttrs"))){c=g.length;while(c--)g[c]&&(d=g[c].name,0===d.indexOf("data-")&&(d=n.camelCase(d.slice(5)),P(f,d,e[d])));L.set(f,"hasDataAttrs",!0)}return e}return"object"==typeof a?this.each(function(){M.set(this,a)}):J(this,function(b){var c,d=n.camelCase(a);if(f&&void 0===b){if(c=M.get(f,a),void 0!==c)return c;if(c=M.get(f,d),void 0!==c)return c;if(c=P(f,d,void 0),void 0!==c)return c}else this.each(function(){var c=M.get(this,d);M.set(this,d,b),-1!==a.indexOf("-")&&void 0!==c&&M.set(this,a,b)})},null,b,arguments.length>1,null,!0)},removeData:function(a){return this.each(function(){M.remove(this,a)})}}),n.extend({queue:function(a,b,c){var d;return a?(b=(b||"fx")+"queue",d=L.get(a,b),c&&(!d||n.isArray(c)?d=L.access(a,b,n.makeArray(c)):d.push(c)),d||[]):void 0},dequeue:function(a,b){b=b||"fx";var c=n.queue(a,b),d=c.length,e=c.shift(),f=n._queueHooks(a,b),g=function(){n.dequeue(a,b)};"inprogress"===e&&(e=c.shift(),d--),e&&("fx"===b&&c.unshift("inprogress"),delete f.stop,e.call(a,g,f)),!d&&f&&f.empty.fire()},_queueHooks:function(a,b){var c=b+"queueHooks";return L.get(a,c)||L.access(a,c,{empty:n.Callbacks("once memory").add(function(){L.remove(a,[b+"queue",c])})})}}),n.fn.extend({queue:function(a,b){var c=2;return"string"!=typeof a&&(b=a,a="fx",c--),arguments.length<c?n.queue(this[0],a):void 0===b?this:this.each(function(){var c=n.queue(this,a,b);n._queueHooks(this,a),"fx"===a&&"inprogress"!==c[0]&&n.dequeue(this,a)})},dequeue:function(a){return this.each(function(){n.dequeue(this,a)})},clearQueue:function(a){return this.queue(a||"fx",[])},promise:function(a,b){var c,d=1,e=n.Deferred(),f=this,g=this.length,h=function(){--d||e.resolveWith(f,[f])};"string"!=typeof a&&(b=a,a=void 0),a=a||"fx";while(g--)c=L.get(f[g],a+"queueHooks"),c&&c.empty&&(d++,c.empty.add(h));return h(),e.promise(b)}});var Q=/[+-]?(?:\d*\.|)\d+(?:[eE][+-]?\d+|)/.source,R=["Top","Right","Bottom","Left"],S=function(a,b){return a=b||a,"none"===n.css(a,"display")||!n.contains(a.ownerDocument,a)},T=/^(?:checkbox|radio)$/i;!function(){var a=l.createDocumentFragment(),b=a.appendChild(l.createElement("div")),c=l.createElement("input");c.setAttribute("type","radio"),c.setAttribute("checked","checked"),c.setAttribute("name","t"),b.appendChild(c),k.checkClone=b.cloneNode(!0).cloneNode(!0).lastChild.checked,b.innerHTML="<textarea>x</textarea>",k.noCloneChecked=!!b.cloneNode(!0).lastChild.defaultValue}();var U="undefined";k.focusinBubbles="onfocusin"in a;var V=/^key/,W=/^(?:mouse|pointer|contextmenu)|click/,X=/^(?:focusinfocus|focusoutblur)$/,Y=/^([^.]*)(?:\.(.+)|)$/;function Z(){return!0}function $(){return!1}function _(){try{return l.activeElement}catch(a){}}n.event={global:{},add:function(a,b,c,d,e){var f,g,h,i,j,k,l,m,o,p,q,r=L.get(a);if(r){c.handler&&(f=c,c=f.handler,e=f.selector),c.guid||(c.guid=n.guid++),(i=r.events)||(i=r.events={}),(g=r.handle)||(g=r.handle=function(b){return typeof n!==U&&n.event.triggered!==b.type?n.event.dispatch.apply(a,arguments):void 0}),b=(b||"").match(E)||[""],j=b.length;while(j--)h=Y.exec(b[j])||[],o=q=h[1],p=(h[2]||"").split(".").sort(),o&&(l=n.event.special[o]||{},o=(e?l.delegateType:l.bindType)||o,l=n.event.special[o]||{},k=n.extend({type:o,origType:q,data:d,handler:c,guid:c.guid,selector:e,needsContext:e&&n.expr.match.needsContext.test(e),namespace:p.join(".")},f),(m=i[o])||(m=i[o]=[],m.delegateCount=0,l.setup&&l.setup.call(a,d,p,g)!==!1||a.addEventListener&&a.addEventListener(o,g,!1)),l.add&&(l.add.call(a,k),k.handler.guid||(k.handler.guid=c.guid)),e?m.splice(m.delegateCount++,0,k):m.push(k),n.event.global[o]=!0)}},remove:function(a,b,c,d,e){var f,g,h,i,j,k,l,m,o,p,q,r=L.hasData(a)&&L.get(a);if(r&&(i=r.events)){b=(b||"").match(E)||[""],j=b.length;while(j--)if(h=Y.exec(b[j])||[],o=q=h[1],p=(h[2]||"").split(".").sort(),o){l=n.event.special[o]||{},o=(d?l.delegateType:l.bindType)||o,m=i[o]||[],h=h[2]&&new RegExp("(^|\\.)"+p.join("\\.(?:.*\\.|)")+"(\\.|$)"),g=f=m.length;while(f--)k=m[f],!e&&q!==k.origType||c&&c.guid!==k.guid||h&&!h.test(k.namespace)||d&&d!==k.selector&&("**"!==d||!k.selector)||(m.splice(f,1),k.selector&&m.delegateCount--,l.remove&&l.remove.call(a,k));g&&!m.length&&(l.teardown&&l.teardown.call(a,p,r.handle)!==!1||n.removeEvent(a,o,r.handle),delete i[o])}else for(o in i)n.event.remove(a,o+b[j],c,d,!0);n.isEmptyObject(i)&&(delete r.handle,L.remove(a,"events"))}},trigger:function(b,c,d,e){var f,g,h,i,k,m,o,p=[d||l],q=j.call(b,"type")?b.type:b,r=j.call(b,"namespace")?b.namespace.split("."):[];if(g=h=d=d||l,3!==d.nodeType&&8!==d.nodeType&&!X.test(q+n.event.triggered)&&(q.indexOf(".")>=0&&(r=q.split("."),q=r.shift(),r.sort()),k=q.indexOf(":")<0&&"on"+q,b=b[n.expando]?b:new n.Event(q,"object"==typeof b&&b),b.isTrigger=e?2:3,b.namespace=r.join("."),b.namespace_re=b.namespace?new RegExp("(^|\\.)"+r.join("\\.(?:.*\\.|)")+"(\\.|$)"):null,b.result=void 0,b.target||(b.target=d),c=null==c?[b]:n.makeArray(c,[b]),o=n.event.special[q]||{},e||!o.trigger||o.trigger.apply(d,c)!==!1)){if(!e&&!o.noBubble&&!n.isWindow(d)){for(i=o.delegateType||q,X.test(i+q)||(g=g.parentNode);g;g=g.parentNode)p.push(g),h=g;h===(d.ownerDocument||l)&&p.push(h.defaultView||h.parentWindow||a)}f=0;while((g=p[f++])&&!b.isPropagationStopped())b.type=f>1?i:o.bindType||q,m=(L.get(g,"events")||{})[b.type]&&L.get(g,"handle"),m&&m.apply(g,c),m=k&&g[k],m&&m.apply&&n.acceptData(g)&&(b.result=m.apply(g,c),b.result===!1&&b.preventDefault());return b.type=q,e||b.isDefaultPrevented()||o._default&&o._default.apply(p.pop(),c)!==!1||!n.acceptData(d)||k&&n.isFunction(d[q])&&!n.isWindow(d)&&(h=d[k],h&&(d[k]=null),n.event.triggered=q,d[q](),n.event.triggered=void 0,h&&(d[k]=h)),b.result}},dispatch:function(a){a=n.event.fix(a);var b,c,e,f,g,h=[],i=d.call(arguments),j=(L.get(this,"events")||{})[a.type]||[],k=n.event.special[a.type]||{};if(i[0]=a,a.delegateTarget=this,!k.preDispatch||k.preDispatch.call(this,a)!==!1){h=n.event.handlers.call(this,a,j),b=0;while((f=h[b++])&&!a.isPropagationStopped()){a.currentTarget=f.elem,c=0;while((g=f.handlers[c++])&&!a.isImmediatePropagationStopped())(!a.namespace_re||a.namespace_re.test(g.namespace))&&(a.handleObj=g,a.data=g.data,e=((n.event.special[g.origType]||{}).handle||g.handler).apply(f.elem,i),void 0!==e&&(a.result=e)===!1&&(a.preventDefault(),a.stopPropagation()))}return k.postDispatch&&k.postDispatch.call(this,a),a.result}},handlers:function(a,b){var c,d,e,f,g=[],h=b.delegateCount,i=a.target;if(h&&i.nodeType&&(!a.button||"click"!==a.type))for(;i!==this;i=i.parentNode||this)if(i.disabled!==!0||"click"!==a.type){for(d=[],c=0;h>c;c++)f=b[c],e=f.selector+" ",void 0===d[e]&&(d[e]=f.needsContext?n(e,this).index(i)>=0:n.find(e,this,null,[i]).length),d[e]&&d.push(f);d.length&&g.push({elem:i,handlers:d})}return h<b.length&&g.push({elem:this,handlers:b.slice(h)}),g},props:"altKey bubbles cancelable ctrlKey currentTarget eventPhase metaKey relatedTarget shiftKey target timeStamp view which".split(" "),fixHooks:{},keyHooks:{props:"char charCode key keyCode".split(" "),filter:function(a,b){return null==a.which&&(a.which=null!=b.charCode?b.charCode:b.keyCode),a}},mouseHooks:{props:"button buttons clientX clientY offsetX offsetY pageX pageY screenX screenY toElement".split(" "),filter:function(a,b){var c,d,e,f=b.button;return null==a.pageX&&null!=b.clientX&&(c=a.target.ownerDocument||l,d=c.documentElement,e=c.body,a.pageX=b.clientX+(d&&d.scrollLeft||e&&e.scrollLeft||0)-(d&&d.clientLeft||e&&e.clientLeft||0),a.pageY=b.clientY+(d&&d.scrollTop||e&&e.scrollTop||0)-(d&&d.clientTop||e&&e.clientTop||0)),a.which||void 0===f||(a.which=1&f?1:2&f?3:4&f?2:0),a}},fix:function(a){if(a[n.expando])return a;var b,c,d,e=a.type,f=a,g=this.fixHooks[e];g||(this.fixHooks[e]=g=W.test(e)?this.mouseHooks:V.test(e)?this.keyHooks:{}),d=g.props?this.props.concat(g.props):this.props,a=new n.Event(f),b=d.length;while(b--)c=d[b],a[c]=f[c];return a.target||(a.target=l),3===a.target.nodeType&&(a.target=a.target.parentNode),g.filter?g.filter(a,f):a},special:{load:{noBubble:!0},focus:{trigger:function(){return this!==_()&&this.focus?(this.focus(),!1):void 0},delegateType:"focusin"},blur:{trigger:function(){return this===_()&&this.blur?(this.blur(),!1):void 0},delegateType:"focusout"},click:{trigger:function(){return"checkbox"===this.type&&this.click&&n.nodeName(this,"input")?(this.click(),!1):void 0},_default:function(a){return n.nodeName(a.target,"a")}},beforeunload:{postDispatch:function(a){void 0!==a.result&&a.originalEvent&&(a.originalEvent.returnValue=a.result)}}},simulate:function(a,b,c,d){var e=n.extend(new n.Event,c,{type:a,isSimulated:!0,originalEvent:{}});d?n.event.trigger(e,null,b):n.event.dispatch.call(b,e),e.isDefaultPrevented()&&c.preventDefault()}},n.removeEvent=function(a,b,c){a.removeEventListener&&a.removeEventListener(b,c,!1)},n.Event=function(a,b){return this instanceof n.Event?(a&&a.type?(this.originalEvent=a,this.type=a.type,this.isDefaultPrevented=a.defaultPrevented||void 0===a.defaultPrevented&&a.returnValue===!1?Z:$):this.type=a,b&&n.extend(this,b),this.timeStamp=a&&a.timeStamp||n.now(),void(this[n.expando]=!0)):new n.Event(a,b)},n.Event.prototype={isDefaultPrevented:$,isPropagationStopped:$,isImmediatePropagationStopped:$,preventDefault:function(){var a=this.originalEvent;this.isDefaultPrevented=Z,a&&a.preventDefault&&a.preventDefault()},stopPropagation:function(){var a=this.originalEvent;this.isPropagationStopped=Z,a&&a.stopPropagation&&a.stopPropagation()},stopImmediatePropagation:function(){var a=this.originalEvent;this.isImmediatePropagationStopped=Z,a&&a.stopImmediatePropagation&&a.stopImmediatePropagation(),this.stopPropagation()}},n.each({mouseenter:"mouseover",mouseleave:"mouseout",pointerenter:"pointerover",pointerleave:"pointerout"},function(a,b){n.event.special[a]={delegateType:b,bindType:b,handle:function(a){var c,d=this,e=a.relatedTarget,f=a.handleObj;return(!e||e!==d&&!n.contains(d,e))&&(a.type=f.origType,c=f.handler.apply(this,arguments),a.type=b),c}}}),k.focusinBubbles||n.each({focus:"focusin",blur:"focusout"},function(a,b){var c=function(a){n.event.simulate(b,a.target,n.event.fix(a),!0)};n.event.special[b]={setup:function(){var d=this.ownerDocument||this,e=L.access(d,b);e||d.addEventListener(a,c,!0),L.access(d,b,(e||0)+1)},teardown:function(){var d=this.ownerDocument||this,e=L.access(d,b)-1;e?L.access(d,b,e):(d.removeEventListener(a,c,!0),L.remove(d,b))}}}),n.fn.extend({on:function(a,b,c,d,e){var f,g;if("object"==typeof a){"string"!=typeof b&&(c=c||b,b=void 0);for(g in a)this.on(g,b,c,a[g],e);return this}if(null==c&&null==d?(d=b,c=b=void 0):null==d&&("string"==typeof b?(d=c,c=void 0):(d=c,c=b,b=void 0)),d===!1)d=$;else if(!d)return this;return 1===e&&(f=d,d=function(a){return n().off(a),f.apply(this,arguments)},d.guid=f.guid||(f.guid=n.guid++)),this.each(function(){n.event.add(this,a,d,c,b)})},one:function(a,b,c,d){return this.on(a,b,c,d,1)},off:function(a,b,c){var d,e;if(a&&a.preventDefault&&a.handleObj)return d=a.handleObj,n(a.delegateTarget).off(d.namespace?d.origType+"."+d.namespace:d.origType,d.selector,d.handler),this;if("object"==typeof a){for(e in a)this.off(e,b,a[e]);return this}return(b===!1||"function"==typeof b)&&(c=b,b=void 0),c===!1&&(c=$),this.each(function(){n.event.remove(this,a,c,b)})},trigger:function(a,b){return this.each(function(){n.event.trigger(a,b,this)})},triggerHandler:function(a,b){var c=this[0];return c?n.event.trigger(a,b,c,!0):void 0}});var aa=/<(?!area|br|col|embed|hr|img|input|link|meta|param)(([\w:]+)[^>]*)\/>/gi,ba=/<([\w:]+)/,ca=/<|&#?\w+;/,da=/<(?:script|style|link)/i,ea=/checked\s*(?:[^=]|=\s*.checked.)/i,fa=/^$|\/(?:java|ecma)script/i,ga=/^true\/(.*)/,ha=/^\s*<!(?:\[CDATA\[|--)|(?:\]\]|--)>\s*$/g,ia={option:[1,"<select multiple='multiple'>","</select>"],thead:[1,"<table>","</table>"],col:[2,"<table><colgroup>","</colgroup></table>"],tr:[2,"<table><tbody>","</tbody></table>"],td:[3,"<table><tbody><tr>","</tr></tbody></table>"],_default:[0,"",""]};ia.optgroup=ia.option,ia.tbody=ia.tfoot=ia.colgroup=ia.caption=ia.thead,ia.th=ia.td;function ja(a,b){return n.nodeName(a,"table")&&n.nodeName(11!==b.nodeType?b:b.firstChild,"tr")?a.getElementsByTagName("tbody")[0]||a.appendChild(a.ownerDocument.createElement("tbody")):a}function ka(a){return a.type=(null!==a.getAttribute("type"))+"/"+a.type,a}function la(a){var b=ga.exec(a.type);return b?a.type=b[1]:a.removeAttribute("type"),a}function ma(a,b){for(var c=0,d=a.length;d>c;c++)L.set(a[c],"globalEval",!b||L.get(b[c],"globalEval"))}function na(a,b){var c,d,e,f,g,h,i,j;if(1===b.nodeType){if(L.hasData(a)&&(f=L.access(a),g=L.set(b,f),j=f.events)){delete g.handle,g.events={};for(e in j)for(c=0,d=j[e].length;d>c;c++)n.event.add(b,e,j[e][c])}M.hasData(a)&&(h=M.access(a),i=n.extend({},h),M.set(b,i))}}function oa(a,b){var c=a.getElementsByTagName?a.getElementsByTagName(b||"*"):a.querySelectorAll?a.querySelectorAll(b||"*"):[];return void 0===b||b&&n.nodeName(a,b)?n.merge([a],c):c}function pa(a,b){var c=b.nodeName.toLowerCase();"input"===c&&T.test(a.type)?b.checked=a.checked:("input"===c||"textarea"===c)&&(b.defaultValue=a.defaultValue)}n.extend({clone:function(a,b,c){var d,e,f,g,h=a.cloneNode(!0),i=n.contains(a.ownerDocument,a);if(!(k.noCloneChecked||1!==a.nodeType&&11!==a.nodeType||n.isXMLDoc(a)))for(g=oa(h),f=oa(a),d=0,e=f.length;e>d;d++)pa(f[d],g[d]);if(b)if(c)for(f=f||oa(a),g=g||oa(h),d=0,e=f.length;e>d;d++)na(f[d],g[d]);else na(a,h);return g=oa(h,"script"),g.length>0&&ma(g,!i&&oa(a,"script")),h},buildFragment:function(a,b,c,d){for(var e,f,g,h,i,j,k=b.createDocumentFragment(),l=[],m=0,o=a.length;o>m;m++)if(e=a[m],e||0===e)if("object"===n.type(e))n.merge(l,e.nodeType?[e]:e);else if(ca.test(e)){f=f||k.appendChild(b.createElement("div")),g=(ba.exec(e)||["",""])[1].toLowerCase(),h=ia[g]||ia._default,f.innerHTML=h[1]+e.replace(aa,"<$1></$2>")+h[2],j=h[0];while(j--)f=f.lastChild;n.merge(l,f.childNodes),f=k.firstChild,f.textContent=""}else l.push(b.createTextNode(e));k.textContent="",m=0;while(e=l[m++])if((!d||-1===n.inArray(e,d))&&(i=n.contains(e.ownerDocument,e),f=oa(k.appendChild(e),"script"),i&&ma(f),c)){j=0;while(e=f[j++])fa.test(e.type||"")&&c.push(e)}return k},cleanData:function(a){for(var b,c,d,e,f=n.event.special,g=0;void 0!==(c=a[g]);g++){if(n.acceptData(c)&&(e=c[L.expando],e&&(b=L.cache[e]))){if(b.events)for(d in b.events)f[d]?n.event.remove(c,d):n.removeEvent(c,d,b.handle);L.cache[e]&&delete L.cache[e]}delete M.cache[c[M.expando]]}}}),n.fn.extend({text:function(a){return J(this,function(a){return void 0===a?n.text(this):this.empty().each(function(){(1===this.nodeType||11===this.nodeType||9===this.nodeType)&&(this.textContent=a)})},null,a,arguments.length)},append:function(){return this.domManip(arguments,function(a){if(1===this.nodeType||11===this.nodeType||9===this.nodeType){var b=ja(this,a);b.appendChild(a)}})},prepend:function(){return this.domManip(arguments,function(a){if(1===this.nodeType||11===this.nodeType||9===this.nodeType){var b=ja(this,a);b.insertBefore(a,b.firstChild)}})},before:function(){return this.domManip(arguments,function(a){this.parentNode&&this.parentNode.insertBefore(a,this)})},after:function(){return this.domManip(arguments,function(a){this.parentNode&&this.parentNode.insertBefore(a,this.nextSibling)})},remove:function(a,b){for(var c,d=a?n.filter(a,this):this,e=0;null!=(c=d[e]);e++)b||1!==c.nodeType||n.cleanData(oa(c)),c.parentNode&&(b&&n.contains(c.ownerDocument,c)&&ma(oa(c,"script")),c.parentNode.removeChild(c));return this},empty:function(){for(var a,b=0;null!=(a=this[b]);b++)1===a.nodeType&&(n.cleanData(oa(a,!1)),a.textContent="");return this},clone:function(a,b){return a=null==a?!1:a,b=null==b?a:b,this.map(function(){return n.clone(this,a,b)})},html:function(a){return J(this,function(a){var b=this[0]||{},c=0,d=this.length;if(void 0===a&&1===b.nodeType)return b.innerHTML;if("string"==typeof a&&!da.test(a)&&!ia[(ba.exec(a)||["",""])[1].toLowerCase()]){a=a.replace(aa,"<$1></$2>");try{for(;d>c;c++)b=this[c]||{},1===b.nodeType&&(n.cleanData(oa(b,!1)),b.innerHTML=a);b=0}catch(e){}}b&&this.empty().append(a)},null,a,arguments.length)},replaceWith:function(){var a=arguments[0];return this.domManip(arguments,function(b){a=this.parentNode,n.cleanData(oa(this)),a&&a.replaceChild(b,this)}),a&&(a.length||a.nodeType)?this:this.remove()},detach:function(a){return this.remove(a,!0)},domManip:function(a,b){a=e.apply([],a);var c,d,f,g,h,i,j=0,l=this.length,m=this,o=l-1,p=a[0],q=n.isFunction(p);if(q||l>1&&"string"==typeof p&&!k.checkClone&&ea.test(p))return this.each(function(c){var d=m.eq(c);q&&(a[0]=p.call(this,c,d.html())),d.domManip(a,b)});if(l&&(c=n.buildFragment(a,this[0].ownerDocument,!1,this),d=c.firstChild,1===c.childNodes.length&&(c=d),d)){for(f=n.map(oa(c,"script"),ka),g=f.length;l>j;j++)h=c,j!==o&&(h=n.clone(h,!0,!0),g&&n.merge(f,oa(h,"script"))),b.call(this[j],h,j);if(g)for(i=f[f.length-1].ownerDocument,n.map(f,la),j=0;g>j;j++)h=f[j],fa.test(h.type||"")&&!L.access(h,"globalEval")&&n.contains(i,h)&&(h.src?n._evalUrl&&n._evalUrl(h.src):n.globalEval(h.textContent.replace(ha,"")))}return this}}),n.each({appendTo:"append",prependTo:"prepend",insertBefore:"before",insertAfter:"after",replaceAll:"replaceWith"},function(a,b){n.fn[a]=function(a){for(var c,d=[],e=n(a),g=e.length-1,h=0;g>=h;h++)c=h===g?this:this.clone(!0),n(e[h])[b](c),f.apply(d,c.get());return this.pushStack(d)}});var qa,ra={};function sa(b,c){var d,e=n(c.createElement(b)).appendTo(c.body),f=a.getDefaultComputedStyle&&(d=a.getDefaultComputedStyle(e[0]))?d.display:n.css(e[0],"display");return e.detach(),f}function ta(a){var b=l,c=ra[a];return c||(c=sa(a,b),"none"!==c&&c||(qa=(qa||n("<iframe frameborder='0' width='0' height='0'/>")).appendTo(b.documentElement),b=qa[0].contentDocument,b.write(),b.close(),c=sa(a,b),qa.detach()),ra[a]=c),c}var ua=/^margin/,va=new RegExp("^("+Q+")(?!px)[a-z%]+$","i"),wa=function(b){return b.ownerDocument.defaultView.opener?b.ownerDocument.defaultView.getComputedStyle(b,null):a.getComputedStyle(b,null)};function xa(a,b,c){var d,e,f,g,h=a.style;return c=c||wa(a),c&&(g=c.getPropertyValue(b)||c[b]),c&&(""!==g||n.contains(a.ownerDocument,a)||(g=n.style(a,b)),va.test(g)&&ua.test(b)&&(d=h.width,e=h.minWidth,f=h.maxWidth,h.minWidth=h.maxWidth=h.width=g,g=c.width,h.width=d,h.minWidth=e,h.maxWidth=f)),void 0!==g?g+"":g}function ya(a,b){return{get:function(){return a()?void delete this.get:(this.get=b).apply(this,arguments)}}}!function(){var b,c,d=l.documentElement,e=l.createElement("div"),f=l.createElement("div");if(f.style){f.style.backgroundClip="content-box",f.cloneNode(!0).style.backgroundClip="",k.clearCloneStyle="content-box"===f.style.backgroundClip,e.style.cssText="border:0;width:0;height:0;top:0;left:-9999px;margin-top:1px;position:absolute",e.appendChild(f);function g(){f.style.cssText="-webkit-box-sizing:border-box;-moz-box-sizing:border-box;box-sizing:border-box;display:block;margin-top:1%;top:1%;border:1px;padding:1px;width:4px;position:absolute",f.innerHTML="",d.appendChild(e);var g=a.getComputedStyle(f,null);b="1%"!==g.top,c="4px"===g.width,d.removeChild(e)}a.getComputedStyle&&n.extend(k,{pixelPosition:function(){return g(),b},boxSizingReliable:function(){return null==c&&g(),c},reliableMarginRight:function(){var b,c=f.appendChild(l.createElement("div"));return c.style.cssText=f.style.cssText="-webkit-box-sizing:content-box;-moz-box-sizing:content-box;box-sizing:content-box;display:block;margin:0;border:0;padding:0",c.style.marginRight=c.style.width="0",f.style.width="1px",d.appendChild(e),b=!parseFloat(a.getComputedStyle(c,null).marginRight),d.removeChild(e),f.removeChild(c),b}})}}(),n.swap=function(a,b,c,d){var e,f,g={};for(f in b)g[f]=a.style[f],a.style[f]=b[f];e=c.apply(a,d||[]);for(f in b)a.style[f]=g[f];return e};var za=/^(none|table(?!-c[ea]).+)/,Aa=new RegExp("^("+Q+")(.*)$","i"),Ba=new RegExp("^([+-])=("+Q+")","i"),Ca={position:"absolute",visibility:"hidden",display:"block"},Da={letterSpacing:"0",fontWeight:"400"},Ea=["Webkit","O","Moz","ms"];function Fa(a,b){if(b in a)return b;var c=b[0].toUpperCase()+b.slice(1),d=b,e=Ea.length;while(e--)if(b=Ea[e]+c,b in a)return b;return d}function Ga(a,b,c){var d=Aa.exec(b);return d?Math.max(0,d[1]-(c||0))+(d[2]||"px"):b}function Ha(a,b,c,d,e){for(var f=c===(d?"border":"content")?4:"width"===b?1:0,g=0;4>f;f+=2)"margin"===c&&(g+=n.css(a,c+R[f],!0,e)),d?("content"===c&&(g-=n.css(a,"padding"+R[f],!0,e)),"margin"!==c&&(g-=n.css(a,"border"+R[f]+"Width",!0,e))):(g+=n.css(a,"padding"+R[f],!0,e),"padding"!==c&&(g+=n.css(a,"border"+R[f]+"Width",!0,e)));return g}function Ia(a,b,c){var d=!0,e="width"===b?a.offsetWidth:a.offsetHeight,f=wa(a),g="border-box"===n.css(a,"boxSizing",!1,f);if(0>=e||null==e){if(e=xa(a,b,f),(0>e||null==e)&&(e=a.style[b]),va.test(e))return e;d=g&&(k.boxSizingReliable()||e===a.style[b]),e=parseFloat(e)||0}return e+Ha(a,b,c||(g?"border":"content"),d,f)+"px"}function Ja(a,b){for(var c,d,e,f=[],g=0,h=a.length;h>g;g++)d=a[g],d.style&&(f[g]=L.get(d,"olddisplay"),c=d.style.display,b?(f[g]||"none"!==c||(d.style.display=""),""===d.style.display&&S(d)&&(f[g]=L.access(d,"olddisplay",ta(d.nodeName)))):(e=S(d),"none"===c&&e||L.set(d,"olddisplay",e?c:n.css(d,"display"))));for(g=0;h>g;g++)d=a[g],d.style&&(b&&"none"!==d.style.display&&""!==d.style.display||(d.style.display=b?f[g]||"":"none"));return a}n.extend({cssHooks:{opacity:{get:function(a,b){if(b){var c=xa(a,"opacity");return""===c?"1":c}}}},cssNumber:{columnCount:!0,fillOpacity:!0,flexGrow:!0,flexShrink:!0,fontWeight:!0,lineHeight:!0,opacity:!0,order:!0,orphans:!0,widows:!0,zIndex:!0,zoom:!0},cssProps:{"float":"cssFloat"},style:function(a,b,c,d){if(a&&3!==a.nodeType&&8!==a.nodeType&&a.style){var e,f,g,h=n.camelCase(b),i=a.style;return b=n.cssProps[h]||(n.cssProps[h]=Fa(i,h)),g=n.cssHooks[b]||n.cssHooks[h],void 0===c?g&&"get"in g&&void 0!==(e=g.get(a,!1,d))?e:i[b]:(f=typeof c,"string"===f&&(e=Ba.exec(c))&&(c=(e[1]+1)*e[2]+parseFloat(n.css(a,b)),f="number"),null!=c&&c===c&&("number"!==f||n.cssNumber[h]||(c+="px"),k.clearCloneStyle||""!==c||0!==b.indexOf("background")||(i[b]="inherit"),g&&"set"in g&&void 0===(c=g.set(a,c,d))||(i[b]=c)),void 0)}},css:function(a,b,c,d){var e,f,g,h=n.camelCase(b);return b=n.cssProps[h]||(n.cssProps[h]=Fa(a.style,h)),g=n.cssHooks[b]||n.cssHooks[h],g&&"get"in g&&(e=g.get(a,!0,c)),void 0===e&&(e=xa(a,b,d)),"normal"===e&&b in Da&&(e=Da[b]),""===c||c?(f=parseFloat(e),c===!0||n.isNumeric(f)?f||0:e):e}}),n.each(["height","width"],function(a,b){n.cssHooks[b]={get:function(a,c,d){return c?za.test(n.css(a,"display"))&&0===a.offsetWidth?n.swap(a,Ca,function(){return Ia(a,b,d)}):Ia(a,b,d):void 0},set:function(a,c,d){var e=d&&wa(a);return Ga(a,c,d?Ha(a,b,d,"border-box"===n.css(a,"boxSizing",!1,e),e):0)}}}),n.cssHooks.marginRight=ya(k.reliableMarginRight,function(a,b){return b?n.swap(a,{display:"inline-block"},xa,[a,"marginRight"]):void 0}),n.each({margin:"",padding:"",border:"Width"},function(a,b){n.cssHooks[a+b]={expand:function(c){for(var d=0,e={},f="string"==typeof c?c.split(" "):[c];4>d;d++)e[a+R[d]+b]=f[d]||f[d-2]||f[0];return e}},ua.test(a)||(n.cssHooks[a+b].set=Ga)}),n.fn.extend({css:function(a,b){return J(this,function(a,b,c){var d,e,f={},g=0;if(n.isArray(b)){for(d=wa(a),e=b.length;e>g;g++)f[b[g]]=n.css(a,b[g],!1,d);return f}return void 0!==c?n.style(a,b,c):n.css(a,b)},a,b,arguments.length>1)},show:function(){return Ja(this,!0)},hide:function(){return Ja(this)},toggle:function(a){return"boolean"==typeof a?a?this.show():this.hide():this.each(function(){S(this)?n(this).show():n(this).hide()})}});function Ka(a,b,c,d,e){return new Ka.prototype.init(a,b,c,d,e)}n.Tween=Ka,Ka.prototype={constructor:Ka,init:function(a,b,c,d,e,f){this.elem=a,this.prop=c,this.easing=e||"swing",this.options=b,this.start=this.now=this.cur(),this.end=d,this.unit=f||(n.cssNumber[c]?"":"px")},cur:function(){var a=Ka.propHooks[this.prop];return a&&a.get?a.get(this):Ka.propHooks._default.get(this)},run:function(a){var b,c=Ka.propHooks[this.prop];return this.options.duration?this.pos=b=n.easing[this.easing](a,this.options.duration*a,0,1,this.options.duration):this.pos=b=a,this.now=(this.end-this.start)*b+this.start,this.options.step&&this.options.step.call(this.elem,this.now,this),c&&c.set?c.set(this):Ka.propHooks._default.set(this),this}},Ka.prototype.init.prototype=Ka.prototype,Ka.propHooks={_default:{get:function(a){var b;return null==a.elem[a.prop]||a.elem.style&&null!=a.elem.style[a.prop]?(b=n.css(a.elem,a.prop,""),b&&"auto"!==b?b:0):a.elem[a.prop]},set:function(a){n.fx.step[a.prop]?n.fx.step[a.prop](a):a.elem.style&&(null!=a.elem.style[n.cssProps[a.prop]]||n.cssHooks[a.prop])?n.style(a.elem,a.prop,a.now+a.unit):a.elem[a.prop]=a.now}}},Ka.propHooks.scrollTop=Ka.propHooks.scrollLeft={set:function(a){a.elem.nodeType&&a.elem.parentNode&&(a.elem[a.prop]=a.now)}},n.easing={linear:function(a){return a},swing:function(a){return.5-Math.cos(a*Math.PI)/2}},n.fx=Ka.prototype.init,n.fx.step={};var La,Ma,Na=/^(?:toggle|show|hide)$/,Oa=new RegExp("^(?:([+-])=|)("+Q+")([a-z%]*)$","i"),Pa=/queueHooks$/,Qa=[Va],Ra={"*":[function(a,b){var c=this.createTween(a,b),d=c.cur(),e=Oa.exec(b),f=e&&e[3]||(n.cssNumber[a]?"":"px"),g=(n.cssNumber[a]||"px"!==f&&+d)&&Oa.exec(n.css(c.elem,a)),h=1,i=20;if(g&&g[3]!==f){f=f||g[3],e=e||[],g=+d||1;do h=h||".5",g/=h,n.style(c.elem,a,g+f);while(h!==(h=c.cur()/d)&&1!==h&&--i)}return e&&(g=c.start=+g||+d||0,c.unit=f,c.end=e[1]?g+(e[1]+1)*e[2]:+e[2]),c}]};function Sa(){return setTimeout(function(){La=void 0}),La=n.now()}function Ta(a,b){var c,d=0,e={height:a};for(b=b?1:0;4>d;d+=2-b)c=R[d],e["margin"+c]=e["padding"+c]=a;return b&&(e.opacity=e.width=a),e}function Ua(a,b,c){for(var d,e=(Ra[b]||[]).concat(Ra["*"]),f=0,g=e.length;g>f;f++)if(d=e[f].call(c,b,a))return d}function Va(a,b,c){var d,e,f,g,h,i,j,k,l=this,m={},o=a.style,p=a.nodeType&&S(a),q=L.get(a,"fxshow");c.queue||(h=n._queueHooks(a,"fx"),null==h.unqueued&&(h.unqueued=0,i=h.empty.fire,h.empty.fire=function(){h.unqueued||i()}),h.unqueued++,l.always(function(){l.always(function(){h.unqueued--,n.queue(a,"fx").length||h.empty.fire()})})),1===a.nodeType&&("height"in b||"width"in b)&&(c.overflow=[o.overflow,o.overflowX,o.overflowY],j=n.css(a,"display"),k="none"===j?L.get(a,"olddisplay")||ta(a.nodeName):j,"inline"===k&&"none"===n.css(a,"float")&&(o.display="inline-block")),c.overflow&&(o.overflow="hidden",l.always(function(){o.overflow=c.overflow[0],o.overflowX=c.overflow[1],o.overflowY=c.overflow[2]}));for(d in b)if(e=b[d],Na.exec(e)){if(delete b[d],f=f||"toggle"===e,e===(p?"hide":"show")){if("show"!==e||!q||void 0===q[d])continue;p=!0}m[d]=q&&q[d]||n.style(a,d)}else j=void 0;if(n.isEmptyObject(m))"inline"===("none"===j?ta(a.nodeName):j)&&(o.display=j);else{q?"hidden"in q&&(p=q.hidden):q=L.access(a,"fxshow",{}),f&&(q.hidden=!p),p?n(a).show():l.done(function(){n(a).hide()}),l.done(function(){var b;L.remove(a,"fxshow");for(b in m)n.style(a,b,m[b])});for(d in m)g=Ua(p?q[d]:0,d,l),d in q||(q[d]=g.start,p&&(g.end=g.start,g.start="width"===d||"height"===d?1:0))}}function Wa(a,b){var c,d,e,f,g;for(c in a)if(d=n.camelCase(c),e=b[d],f=a[c],n.isArray(f)&&(e=f[1],f=a[c]=f[0]),c!==d&&(a[d]=f,delete a[c]),g=n.cssHooks[d],g&&"expand"in g){f=g.expand(f),delete a[d];for(c in f)c in a||(a[c]=f[c],b[c]=e)}else b[d]=e}function Xa(a,b,c){var d,e,f=0,g=Qa.length,h=n.Deferred().always(function(){delete i.elem}),i=function(){if(e)return!1;for(var b=La||Sa(),c=Math.max(0,j.startTime+j.duration-b),d=c/j.duration||0,f=1-d,g=0,i=j.tweens.length;i>g;g++)j.tweens[g].run(f);return h.notifyWith(a,[j,f,c]),1>f&&i?c:(h.resolveWith(a,[j]),!1)},j=h.promise({elem:a,props:n.extend({},b),opts:n.extend(!0,{specialEasing:{}},c),originalProperties:b,originalOptions:c,startTime:La||Sa(),duration:c.duration,tweens:[],createTween:function(b,c){var d=n.Tween(a,j.opts,b,c,j.opts.specialEasing[b]||j.opts.easing);return j.tweens.push(d),d},stop:function(b){var c=0,d=b?j.tweens.length:0;if(e)return this;for(e=!0;d>c;c++)j.tweens[c].run(1);return b?h.resolveWith(a,[j,b]):h.rejectWith(a,[j,b]),this}}),k=j.props;for(Wa(k,j.opts.specialEasing);g>f;f++)if(d=Qa[f].call(j,a,k,j.opts))return d;return n.map(k,Ua,j),n.isFunction(j.opts.start)&&j.opts.start.call(a,j),n.fx.timer(n.extend(i,{elem:a,anim:j,queue:j.opts.queue})),j.progress(j.opts.progress).done(j.opts.done,j.opts.complete).fail(j.opts.fail).always(j.opts.always)}n.Animation=n.extend(Xa,{tweener:function(a,b){n.isFunction(a)?(b=a,a=["*"]):a=a.split(" ");for(var c,d=0,e=a.length;e>d;d++)c=a[d],Ra[c]=Ra[c]||[],Ra[c].unshift(b)},prefilter:function(a,b){b?Qa.unshift(a):Qa.push(a)}}),n.speed=function(a,b,c){var d=a&&"object"==typeof a?n.extend({},a):{complete:c||!c&&b||n.isFunction(a)&&a,duration:a,easing:c&&b||b&&!n.isFunction(b)&&b};return d.duration=n.fx.off?0:"number"==typeof d.duration?d.duration:d.duration in n.fx.speeds?n.fx.speeds[d.duration]:n.fx.speeds._default,(null==d.queue||d.queue===!0)&&(d.queue="fx"),d.old=d.complete,d.complete=function(){n.isFunction(d.old)&&d.old.call(this),d.queue&&n.dequeue(this,d.queue)},d},n.fn.extend({fadeTo:function(a,b,c,d){return this.filter(S).css("opacity",0).show().end().animate({opacity:b},a,c,d)},animate:function(a,b,c,d){var e=n.isEmptyObject(a),f=n.speed(b,c,d),g=function(){var b=Xa(this,n.extend({},a),f);(e||L.get(this,"finish"))&&b.stop(!0)};return g.finish=g,e||f.queue===!1?this.each(g):this.queue(f.queue,g)},stop:function(a,b,c){var d=function(a){var b=a.stop;delete a.stop,b(c)};return"string"!=typeof a&&(c=b,b=a,a=void 0),b&&a!==!1&&this.queue(a||"fx",[]),this.each(function(){var b=!0,e=null!=a&&a+"queueHooks",f=n.timers,g=L.get(this);if(e)g[e]&&g[e].stop&&d(g[e]);else for(e in g)g[e]&&g[e].stop&&Pa.test(e)&&d(g[e]);for(e=f.length;e--;)f[e].elem!==this||null!=a&&f[e].queue!==a||(f[e].anim.stop(c),b=!1,f.splice(e,1));(b||!c)&&n.dequeue(this,a)})},finish:function(a){return a!==!1&&(a=a||"fx"),this.each(function(){var b,c=L.get(this),d=c[a+"queue"],e=c[a+"queueHooks"],f=n.timers,g=d?d.length:0;for(c.finish=!0,n.queue(this,a,[]),e&&e.stop&&e.stop.call(this,!0),b=f.length;b--;)f[b].elem===this&&f[b].queue===a&&(f[b].anim.stop(!0),f.splice(b,1));for(b=0;g>b;b++)d[b]&&d[b].finish&&d[b].finish.call(this);delete c.finish})}}),n.each(["toggle","show","hide"],function(a,b){var c=n.fn[b];n.fn[b]=function(a,d,e){return null==a||"boolean"==typeof a?c.apply(this,arguments):this.animate(Ta(b,!0),a,d,e)}}),n.each({slideDown:Ta("show"),slideUp:Ta("hide"),slideToggle:Ta("toggle"),fadeIn:{opacity:"show"},fadeOut:{opacity:"hide"},fadeToggle:{opacity:"toggle"}},function(a,b){n.fn[a]=function(a,c,d){return this.animate(b,a,c,d)}}),n.timers=[],n.fx.tick=function(){var a,b=0,c=n.timers;for(La=n.now();b<c.length;b++)a=c[b],a()||c[b]!==a||c.splice(b--,1);c.length||n.fx.stop(),La=void 0},n.fx.timer=function(a){n.timers.push(a),a()?n.fx.start():n.timers.pop()},n.fx.interval=13,n.fx.start=function(){Ma||(Ma=setInterval(n.fx.tick,n.fx.interval))},n.fx.stop=function(){clearInterval(Ma),Ma=null},n.fx.speeds={slow:600,fast:200,_default:400},n.fn.delay=function(a,b){return a=n.fx?n.fx.speeds[a]||a:a,b=b||"fx",this.queue(b,function(b,c){var d=setTimeout(b,a);c.stop=function(){clearTimeout(d)}})},function(){var a=l.createElement("input"),b=l.createElement("select"),c=b.appendChild(l.createElement("option"));a.type="checkbox",k.checkOn=""!==a.value,k.optSelected=c.selected,b.disabled=!0,k.optDisabled=!c.disabled,a=l.createElement("input"),a.value="t",a.type="radio",k.radioValue="t"===a.value}();var Ya,Za,$a=n.expr.attrHandle;n.fn.extend({attr:function(a,b){return J(this,n.attr,a,b,arguments.length>1)},removeAttr:function(a){return this.each(function(){n.removeAttr(this,a)})}}),n.extend({attr:function(a,b,c){var d,e,f=a.nodeType;if(a&&3!==f&&8!==f&&2!==f)return typeof a.getAttribute===U?n.prop(a,b,c):(1===f&&n.isXMLDoc(a)||(b=b.toLowerCase(),d=n.attrHooks[b]||(n.expr.match.bool.test(b)?Za:Ya)),
+void 0===c?d&&"get"in d&&null!==(e=d.get(a,b))?e:(e=n.find.attr(a,b),null==e?void 0:e):null!==c?d&&"set"in d&&void 0!==(e=d.set(a,c,b))?e:(a.setAttribute(b,c+""),c):void n.removeAttr(a,b))},removeAttr:function(a,b){var c,d,e=0,f=b&&b.match(E);if(f&&1===a.nodeType)while(c=f[e++])d=n.propFix[c]||c,n.expr.match.bool.test(c)&&(a[d]=!1),a.removeAttribute(c)},attrHooks:{type:{set:function(a,b){if(!k.radioValue&&"radio"===b&&n.nodeName(a,"input")){var c=a.value;return a.setAttribute("type",b),c&&(a.value=c),b}}}}}),Za={set:function(a,b,c){return b===!1?n.removeAttr(a,c):a.setAttribute(c,c),c}},n.each(n.expr.match.bool.source.match(/\w+/g),function(a,b){var c=$a[b]||n.find.attr;$a[b]=function(a,b,d){var e,f;return d||(f=$a[b],$a[b]=e,e=null!=c(a,b,d)?b.toLowerCase():null,$a[b]=f),e}});var _a=/^(?:input|select|textarea|button)$/i;n.fn.extend({prop:function(a,b){return J(this,n.prop,a,b,arguments.length>1)},removeProp:function(a){return this.each(function(){delete this[n.propFix[a]||a]})}}),n.extend({propFix:{"for":"htmlFor","class":"className"},prop:function(a,b,c){var d,e,f,g=a.nodeType;if(a&&3!==g&&8!==g&&2!==g)return f=1!==g||!n.isXMLDoc(a),f&&(b=n.propFix[b]||b,e=n.propHooks[b]),void 0!==c?e&&"set"in e&&void 0!==(d=e.set(a,c,b))?d:a[b]=c:e&&"get"in e&&null!==(d=e.get(a,b))?d:a[b]},propHooks:{tabIndex:{get:function(a){return a.hasAttribute("tabindex")||_a.test(a.nodeName)||a.href?a.tabIndex:-1}}}}),k.optSelected||(n.propHooks.selected={get:function(a){var b=a.parentNode;return b&&b.parentNode&&b.parentNode.selectedIndex,null}}),n.each(["tabIndex","readOnly","maxLength","cellSpacing","cellPadding","rowSpan","colSpan","useMap","frameBorder","contentEditable"],function(){n.propFix[this.toLowerCase()]=this});var ab=/[\t\r\n\f]/g;n.fn.extend({addClass:function(a){var b,c,d,e,f,g,h="string"==typeof a&&a,i=0,j=this.length;if(n.isFunction(a))return this.each(function(b){n(this).addClass(a.call(this,b,this.className))});if(h)for(b=(a||"").match(E)||[];j>i;i++)if(c=this[i],d=1===c.nodeType&&(c.className?(" "+c.className+" ").replace(ab," "):" ")){f=0;while(e=b[f++])d.indexOf(" "+e+" ")<0&&(d+=e+" ");g=n.trim(d),c.className!==g&&(c.className=g)}return this},removeClass:function(a){var b,c,d,e,f,g,h=0===arguments.length||"string"==typeof a&&a,i=0,j=this.length;if(n.isFunction(a))return this.each(function(b){n(this).removeClass(a.call(this,b,this.className))});if(h)for(b=(a||"").match(E)||[];j>i;i++)if(c=this[i],d=1===c.nodeType&&(c.className?(" "+c.className+" ").replace(ab," "):"")){f=0;while(e=b[f++])while(d.indexOf(" "+e+" ")>=0)d=d.replace(" "+e+" "," ");g=a?n.trim(d):"",c.className!==g&&(c.className=g)}return this},toggleClass:function(a,b){var c=typeof a;return"boolean"==typeof b&&"string"===c?b?this.addClass(a):this.removeClass(a):this.each(n.isFunction(a)?function(c){n(this).toggleClass(a.call(this,c,this.className,b),b)}:function(){if("string"===c){var b,d=0,e=n(this),f=a.match(E)||[];while(b=f[d++])e.hasClass(b)?e.removeClass(b):e.addClass(b)}else(c===U||"boolean"===c)&&(this.className&&L.set(this,"__className__",this.className),this.className=this.className||a===!1?"":L.get(this,"__className__")||"")})},hasClass:function(a){for(var b=" "+a+" ",c=0,d=this.length;d>c;c++)if(1===this[c].nodeType&&(" "+this[c].className+" ").replace(ab," ").indexOf(b)>=0)return!0;return!1}});var bb=/\r/g;n.fn.extend({val:function(a){var b,c,d,e=this[0];{if(arguments.length)return d=n.isFunction(a),this.each(function(c){var e;1===this.nodeType&&(e=d?a.call(this,c,n(this).val()):a,null==e?e="":"number"==typeof e?e+="":n.isArray(e)&&(e=n.map(e,function(a){return null==a?"":a+""})),b=n.valHooks[this.type]||n.valHooks[this.nodeName.toLowerCase()],b&&"set"in b&&void 0!==b.set(this,e,"value")||(this.value=e))});if(e)return b=n.valHooks[e.type]||n.valHooks[e.nodeName.toLowerCase()],b&&"get"in b&&void 0!==(c=b.get(e,"value"))?c:(c=e.value,"string"==typeof c?c.replace(bb,""):null==c?"":c)}}}),n.extend({valHooks:{option:{get:function(a){var b=n.find.attr(a,"value");return null!=b?b:n.trim(n.text(a))}},select:{get:function(a){for(var b,c,d=a.options,e=a.selectedIndex,f="select-one"===a.type||0>e,g=f?null:[],h=f?e+1:d.length,i=0>e?h:f?e:0;h>i;i++)if(c=d[i],!(!c.selected&&i!==e||(k.optDisabled?c.disabled:null!==c.getAttribute("disabled"))||c.parentNode.disabled&&n.nodeName(c.parentNode,"optgroup"))){if(b=n(c).val(),f)return b;g.push(b)}return g},set:function(a,b){var c,d,e=a.options,f=n.makeArray(b),g=e.length;while(g--)d=e[g],(d.selected=n.inArray(d.value,f)>=0)&&(c=!0);return c||(a.selectedIndex=-1),f}}}}),n.each(["radio","checkbox"],function(){n.valHooks[this]={set:function(a,b){return n.isArray(b)?a.checked=n.inArray(n(a).val(),b)>=0:void 0}},k.checkOn||(n.valHooks[this].get=function(a){return null===a.getAttribute("value")?"on":a.value})}),n.each("blur focus focusin focusout load resize scroll unload click dblclick mousedown mouseup mousemove mouseover mouseout mouseenter mouseleave change select submit keydown keypress keyup error contextmenu".split(" "),function(a,b){n.fn[b]=function(a,c){return arguments.length>0?this.on(b,null,a,c):this.trigger(b)}}),n.fn.extend({hover:function(a,b){return this.mouseenter(a).mouseleave(b||a)},bind:function(a,b,c){return this.on(a,null,b,c)},unbind:function(a,b){return this.off(a,null,b)},delegate:function(a,b,c,d){return this.on(b,a,c,d)},undelegate:function(a,b,c){return 1===arguments.length?this.off(a,"**"):this.off(b,a||"**",c)}});var cb=n.now(),db=/\?/;n.parseJSON=function(a){return JSON.parse(a+"")},n.parseXML=function(a){var b,c;if(!a||"string"!=typeof a)return null;try{c=new DOMParser,b=c.parseFromString(a,"text/xml")}catch(d){b=void 0}return(!b||b.getElementsByTagName("parsererror").length)&&n.error("Invalid XML: "+a),b};var eb=/#.*$/,fb=/([?&])_=[^&]*/,gb=/^(.*?):[ \t]*([^\r\n]*)$/gm,hb=/^(?:about|app|app-storage|.+-extension|file|res|widget):$/,ib=/^(?:GET|HEAD)$/,jb=/^\/\//,kb=/^([\w.+-]+:)(?:\/\/(?:[^\/?#]*@|)([^\/?#:]*)(?::(\d+)|)|)/,lb={},mb={},nb="*/".concat("*"),ob=a.location.href,pb=kb.exec(ob.toLowerCase())||[];function qb(a){return function(b,c){"string"!=typeof b&&(c=b,b="*");var d,e=0,f=b.toLowerCase().match(E)||[];if(n.isFunction(c))while(d=f[e++])"+"===d[0]?(d=d.slice(1)||"*",(a[d]=a[d]||[]).unshift(c)):(a[d]=a[d]||[]).push(c)}}function rb(a,b,c,d){var e={},f=a===mb;function g(h){var i;return e[h]=!0,n.each(a[h]||[],function(a,h){var j=h(b,c,d);return"string"!=typeof j||f||e[j]?f?!(i=j):void 0:(b.dataTypes.unshift(j),g(j),!1)}),i}return g(b.dataTypes[0])||!e["*"]&&g("*")}function sb(a,b){var c,d,e=n.ajaxSettings.flatOptions||{};for(c in b)void 0!==b[c]&&((e[c]?a:d||(d={}))[c]=b[c]);return d&&n.extend(!0,a,d),a}function tb(a,b,c){var d,e,f,g,h=a.contents,i=a.dataTypes;while("*"===i[0])i.shift(),void 0===d&&(d=a.mimeType||b.getResponseHeader("Content-Type"));if(d)for(e in h)if(h[e]&&h[e].test(d)){i.unshift(e);break}if(i[0]in c)f=i[0];else{for(e in c){if(!i[0]||a.converters[e+" "+i[0]]){f=e;break}g||(g=e)}f=f||g}return f?(f!==i[0]&&i.unshift(f),c[f]):void 0}function ub(a,b,c,d){var e,f,g,h,i,j={},k=a.dataTypes.slice();if(k[1])for(g in a.converters)j[g.toLowerCase()]=a.converters[g];f=k.shift();while(f)if(a.responseFields[f]&&(c[a.responseFields[f]]=b),!i&&d&&a.dataFilter&&(b=a.dataFilter(b,a.dataType)),i=f,f=k.shift())if("*"===f)f=i;else if("*"!==i&&i!==f){if(g=j[i+" "+f]||j["* "+f],!g)for(e in j)if(h=e.split(" "),h[1]===f&&(g=j[i+" "+h[0]]||j["* "+h[0]])){g===!0?g=j[e]:j[e]!==!0&&(f=h[0],k.unshift(h[1]));break}if(g!==!0)if(g&&a["throws"])b=g(b);else try{b=g(b)}catch(l){return{state:"parsererror",error:g?l:"No conversion from "+i+" to "+f}}}return{state:"success",data:b}}n.extend({active:0,lastModified:{},etag:{},ajaxSettings:{url:ob,type:"GET",isLocal:hb.test(pb[1]),global:!0,processData:!0,async:!0,contentType:"application/x-www-form-urlencoded; charset=UTF-8",accepts:{"*":nb,text:"text/plain",html:"text/html",xml:"application/xml, text/xml",json:"application/json, text/javascript"},contents:{xml:/xml/,html:/html/,json:/json/},responseFields:{xml:"responseXML",text:"responseText",json:"responseJSON"},converters:{"* text":String,"text html":!0,"text json":n.parseJSON,"text xml":n.parseXML},flatOptions:{url:!0,context:!0}},ajaxSetup:function(a,b){return b?sb(sb(a,n.ajaxSettings),b):sb(n.ajaxSettings,a)},ajaxPrefilter:qb(lb),ajaxTransport:qb(mb),ajax:function(a,b){"object"==typeof a&&(b=a,a=void 0),b=b||{};var c,d,e,f,g,h,i,j,k=n.ajaxSetup({},b),l=k.context||k,m=k.context&&(l.nodeType||l.jquery)?n(l):n.event,o=n.Deferred(),p=n.Callbacks("once memory"),q=k.statusCode||{},r={},s={},t=0,u="canceled",v={readyState:0,getResponseHeader:function(a){var b;if(2===t){if(!f){f={};while(b=gb.exec(e))f[b[1].toLowerCase()]=b[2]}b=f[a.toLowerCase()]}return null==b?null:b},getAllResponseHeaders:function(){return 2===t?e:null},setRequestHeader:function(a,b){var c=a.toLowerCase();return t||(a=s[c]=s[c]||a,r[a]=b),this},overrideMimeType:function(a){return t||(k.mimeType=a),this},statusCode:function(a){var b;if(a)if(2>t)for(b in a)q[b]=[q[b],a[b]];else v.always(a[v.status]);return this},abort:function(a){var b=a||u;return c&&c.abort(b),x(0,b),this}};if(o.promise(v).complete=p.add,v.success=v.done,v.error=v.fail,k.url=((a||k.url||ob)+"").replace(eb,"").replace(jb,pb[1]+"//"),k.type=b.method||b.type||k.method||k.type,k.dataTypes=n.trim(k.dataType||"*").toLowerCase().match(E)||[""],null==k.crossDomain&&(h=kb.exec(k.url.toLowerCase()),k.crossDomain=!(!h||h[1]===pb[1]&&h[2]===pb[2]&&(h[3]||("http:"===h[1]?"80":"443"))===(pb[3]||("http:"===pb[1]?"80":"443")))),k.data&&k.processData&&"string"!=typeof k.data&&(k.data=n.param(k.data,k.traditional)),rb(lb,k,b,v),2===t)return v;i=n.event&&k.global,i&&0===n.active++&&n.event.trigger("ajaxStart"),k.type=k.type.toUpperCase(),k.hasContent=!ib.test(k.type),d=k.url,k.hasContent||(k.data&&(d=k.url+=(db.test(d)?"&":"?")+k.data,delete k.data),k.cache===!1&&(k.url=fb.test(d)?d.replace(fb,"$1_="+cb++):d+(db.test(d)?"&":"?")+"_="+cb++)),k.ifModified&&(n.lastModified[d]&&v.setRequestHeader("If-Modified-Since",n.lastModified[d]),n.etag[d]&&v.setRequestHeader("If-None-Match",n.etag[d])),(k.data&&k.hasContent&&k.contentType!==!1||b.contentType)&&v.setRequestHeader("Content-Type",k.contentType),v.setRequestHeader("Accept",k.dataTypes[0]&&k.accepts[k.dataTypes[0]]?k.accepts[k.dataTypes[0]]+("*"!==k.dataTypes[0]?", "+nb+"; q=0.01":""):k.accepts["*"]);for(j in k.headers)v.setRequestHeader(j,k.headers[j]);if(k.beforeSend&&(k.beforeSend.call(l,v,k)===!1||2===t))return v.abort();u="abort";for(j in{success:1,error:1,complete:1})v[j](k[j]);if(c=rb(mb,k,b,v)){v.readyState=1,i&&m.trigger("ajaxSend",[v,k]),k.async&&k.timeout>0&&(g=setTimeout(function(){v.abort("timeout")},k.timeout));try{t=1,c.send(r,x)}catch(w){if(!(2>t))throw w;x(-1,w)}}else x(-1,"No Transport");function x(a,b,f,h){var j,r,s,u,w,x=b;2!==t&&(t=2,g&&clearTimeout(g),c=void 0,e=h||"",v.readyState=a>0?4:0,j=a>=200&&300>a||304===a,f&&(u=tb(k,v,f)),u=ub(k,u,v,j),j?(k.ifModified&&(w=v.getResponseHeader("Last-Modified"),w&&(n.lastModified[d]=w),w=v.getResponseHeader("etag"),w&&(n.etag[d]=w)),204===a||"HEAD"===k.type?x="nocontent":304===a?x="notmodified":(x=u.state,r=u.data,s=u.error,j=!s)):(s=x,(a||!x)&&(x="error",0>a&&(a=0))),v.status=a,v.statusText=(b||x)+"",j?o.resolveWith(l,[r,x,v]):o.rejectWith(l,[v,x,s]),v.statusCode(q),q=void 0,i&&m.trigger(j?"ajaxSuccess":"ajaxError",[v,k,j?r:s]),p.fireWith(l,[v,x]),i&&(m.trigger("ajaxComplete",[v,k]),--n.active||n.event.trigger("ajaxStop")))}return v},getJSON:function(a,b,c){return n.get(a,b,c,"json")},getScript:function(a,b){return n.get(a,void 0,b,"script")}}),n.each(["get","post"],function(a,b){n[b]=function(a,c,d,e){return n.isFunction(c)&&(e=e||d,d=c,c=void 0),n.ajax({url:a,type:b,dataType:e,data:c,success:d})}}),n._evalUrl=function(a){return n.ajax({url:a,type:"GET",dataType:"script",async:!1,global:!1,"throws":!0})},n.fn.extend({wrapAll:function(a){var b;return n.isFunction(a)?this.each(function(b){n(this).wrapAll(a.call(this,b))}):(this[0]&&(b=n(a,this[0].ownerDocument).eq(0).clone(!0),this[0].parentNode&&b.insertBefore(this[0]),b.map(function(){var a=this;while(a.firstElementChild)a=a.firstElementChild;return a}).append(this)),this)},wrapInner:function(a){return this.each(n.isFunction(a)?function(b){n(this).wrapInner(a.call(this,b))}:function(){var b=n(this),c=b.contents();c.length?c.wrapAll(a):b.append(a)})},wrap:function(a){var b=n.isFunction(a);return this.each(function(c){n(this).wrapAll(b?a.call(this,c):a)})},unwrap:function(){return this.parent().each(function(){n.nodeName(this,"body")||n(this).replaceWith(this.childNodes)}).end()}}),n.expr.filters.hidden=function(a){return a.offsetWidth<=0&&a.offsetHeight<=0},n.expr.filters.visible=function(a){return!n.expr.filters.hidden(a)};var vb=/%20/g,wb=/\[\]$/,xb=/\r?\n/g,yb=/^(?:submit|button|image|reset|file)$/i,zb=/^(?:input|select|textarea|keygen)/i;function Ab(a,b,c,d){var e;if(n.isArray(b))n.each(b,function(b,e){c||wb.test(a)?d(a,e):Ab(a+"["+("object"==typeof e?b:"")+"]",e,c,d)});else if(c||"object"!==n.type(b))d(a,b);else for(e in b)Ab(a+"["+e+"]",b[e],c,d)}n.param=function(a,b){var c,d=[],e=function(a,b){b=n.isFunction(b)?b():null==b?"":b,d[d.length]=encodeURIComponent(a)+"="+encodeURIComponent(b)};if(void 0===b&&(b=n.ajaxSettings&&n.ajaxSettings.traditional),n.isArray(a)||a.jquery&&!n.isPlainObject(a))n.each(a,function(){e(this.name,this.value)});else for(c in a)Ab(c,a[c],b,e);return d.join("&").replace(vb,"+")},n.fn.extend({serialize:function(){return n.param(this.serializeArray())},serializeArray:function(){return this.map(function(){var a=n.prop(this,"elements");return a?n.makeArray(a):this}).filter(function(){var a=this.type;return this.name&&!n(this).is(":disabled")&&zb.test(this.nodeName)&&!yb.test(a)&&(this.checked||!T.test(a))}).map(function(a,b){var c=n(this).val();return null==c?null:n.isArray(c)?n.map(c,function(a){return{name:b.name,value:a.replace(xb,"\r\n")}}):{name:b.name,value:c.replace(xb,"\r\n")}}).get()}}),n.ajaxSettings.xhr=function(){try{return new XMLHttpRequest}catch(a){}};var Bb=0,Cb={},Db={0:200,1223:204},Eb=n.ajaxSettings.xhr();a.attachEvent&&a.attachEvent("onunload",function(){for(var a in Cb)Cb[a]()}),k.cors=!!Eb&&"withCredentials"in Eb,k.ajax=Eb=!!Eb,n.ajaxTransport(function(a){var b;return k.cors||Eb&&!a.crossDomain?{send:function(c,d){var e,f=a.xhr(),g=++Bb;if(f.open(a.type,a.url,a.async,a.username,a.password),a.xhrFields)for(e in a.xhrFields)f[e]=a.xhrFields[e];a.mimeType&&f.overrideMimeType&&f.overrideMimeType(a.mimeType),a.crossDomain||c["X-Requested-With"]||(c["X-Requested-With"]="XMLHttpRequest");for(e in c)f.setRequestHeader(e,c[e]);b=function(a){return function(){b&&(delete Cb[g],b=f.onload=f.onerror=null,"abort"===a?f.abort():"error"===a?d(f.status,f.statusText):d(Db[f.status]||f.status,f.statusText,"string"==typeof f.responseText?{text:f.responseText}:void 0,f.getAllResponseHeaders()))}},f.onload=b(),f.onerror=b("error"),b=Cb[g]=b("abort");try{f.send(a.hasContent&&a.data||null)}catch(h){if(b)throw h}},abort:function(){b&&b()}}:void 0}),n.ajaxSetup({accepts:{script:"text/javascript, application/javascript, application/ecmascript, application/x-ecmascript"},contents:{script:/(?:java|ecma)script/},converters:{"text script":function(a){return n.globalEval(a),a}}}),n.ajaxPrefilter("script",function(a){void 0===a.cache&&(a.cache=!1),a.crossDomain&&(a.type="GET")}),n.ajaxTransport("script",function(a){if(a.crossDomain){var b,c;return{send:function(d,e){b=n("<script>").prop({async:!0,charset:a.scriptCharset,src:a.url}).on("load error",c=function(a){b.remove(),c=null,a&&e("error"===a.type?404:200,a.type)}),l.head.appendChild(b[0])},abort:function(){c&&c()}}}});var Fb=[],Gb=/(=)\?(?=&|$)|\?\?/;n.ajaxSetup({jsonp:"callback",jsonpCallback:function(){var a=Fb.pop()||n.expando+"_"+cb++;return this[a]=!0,a}}),n.ajaxPrefilter("json jsonp",function(b,c,d){var e,f,g,h=b.jsonp!==!1&&(Gb.test(b.url)?"url":"string"==typeof b.data&&!(b.contentType||"").indexOf("application/x-www-form-urlencoded")&&Gb.test(b.data)&&"data");return h||"jsonp"===b.dataTypes[0]?(e=b.jsonpCallback=n.isFunction(b.jsonpCallback)?b.jsonpCallback():b.jsonpCallback,h?b[h]=b[h].replace(Gb,"$1"+e):b.jsonp!==!1&&(b.url+=(db.test(b.url)?"&":"?")+b.jsonp+"="+e),b.converters["script json"]=function(){return g||n.error(e+" was not called"),g[0]},b.dataTypes[0]="json",f=a[e],a[e]=function(){g=arguments},d.always(function(){a[e]=f,b[e]&&(b.jsonpCallback=c.jsonpCallback,Fb.push(e)),g&&n.isFunction(f)&&f(g[0]),g=f=void 0}),"script"):void 0}),n.parseHTML=function(a,b,c){if(!a||"string"!=typeof a)return null;"boolean"==typeof b&&(c=b,b=!1),b=b||l;var d=v.exec(a),e=!c&&[];return d?[b.createElement(d[1])]:(d=n.buildFragment([a],b,e),e&&e.length&&n(e).remove(),n.merge([],d.childNodes))};var Hb=n.fn.load;n.fn.load=function(a,b,c){if("string"!=typeof a&&Hb)return Hb.apply(this,arguments);var d,e,f,g=this,h=a.indexOf(" ");return h>=0&&(d=n.trim(a.slice(h)),a=a.slice(0,h)),n.isFunction(b)?(c=b,b=void 0):b&&"object"==typeof b&&(e="POST"),g.length>0&&n.ajax({url:a,type:e,dataType:"html",data:b}).done(function(a){f=arguments,g.html(d?n("<div>").append(n.parseHTML(a)).find(d):a)}).complete(c&&function(a,b){g.each(c,f||[a.responseText,b,a])}),this},n.each(["ajaxStart","ajaxStop","ajaxComplete","ajaxError","ajaxSuccess","ajaxSend"],function(a,b){n.fn[b]=function(a){return this.on(b,a)}}),n.expr.filters.animated=function(a){return n.grep(n.timers,function(b){return a===b.elem}).length};var Ib=a.document.documentElement;function Jb(a){return n.isWindow(a)?a:9===a.nodeType&&a.defaultView}n.offset={setOffset:function(a,b,c){var d,e,f,g,h,i,j,k=n.css(a,"position"),l=n(a),m={};"static"===k&&(a.style.position="relative"),h=l.offset(),f=n.css(a,"top"),i=n.css(a,"left"),j=("absolute"===k||"fixed"===k)&&(f+i).indexOf("auto")>-1,j?(d=l.position(),g=d.top,e=d.left):(g=parseFloat(f)||0,e=parseFloat(i)||0),n.isFunction(b)&&(b=b.call(a,c,h)),null!=b.top&&(m.top=b.top-h.top+g),null!=b.left&&(m.left=b.left-h.left+e),"using"in b?b.using.call(a,m):l.css(m)}},n.fn.extend({offset:function(a){if(arguments.length)return void 0===a?this:this.each(function(b){n.offset.setOffset(this,a,b)});var b,c,d=this[0],e={top:0,left:0},f=d&&d.ownerDocument;if(f)return b=f.documentElement,n.contains(b,d)?(typeof d.getBoundingClientRect!==U&&(e=d.getBoundingClientRect()),c=Jb(f),{top:e.top+c.pageYOffset-b.clientTop,left:e.left+c.pageXOffset-b.clientLeft}):e},position:function(){if(this[0]){var a,b,c=this[0],d={top:0,left:0};return"fixed"===n.css(c,"position")?b=c.getBoundingClientRect():(a=this.offsetParent(),b=this.offset(),n.nodeName(a[0],"html")||(d=a.offset()),d.top+=n.css(a[0],"borderTopWidth",!0),d.left+=n.css(a[0],"borderLeftWidth",!0)),{top:b.top-d.top-n.css(c,"marginTop",!0),left:b.left-d.left-n.css(c,"marginLeft",!0)}}},offsetParent:function(){return this.map(function(){var a=this.offsetParent||Ib;while(a&&!n.nodeName(a,"html")&&"static"===n.css(a,"position"))a=a.offsetParent;return a||Ib})}}),n.each({scrollLeft:"pageXOffset",scrollTop:"pageYOffset"},function(b,c){var d="pageYOffset"===c;n.fn[b]=function(e){return J(this,function(b,e,f){var g=Jb(b);return void 0===f?g?g[c]:b[e]:void(g?g.scrollTo(d?a.pageXOffset:f,d?f:a.pageYOffset):b[e]=f)},b,e,arguments.length,null)}}),n.each(["top","left"],function(a,b){n.cssHooks[b]=ya(k.pixelPosition,function(a,c){return c?(c=xa(a,b),va.test(c)?n(a).position()[b]+"px":c):void 0})}),n.each({Height:"height",Width:"width"},function(a,b){n.each({padding:"inner"+a,content:b,"":"outer"+a},function(c,d){n.fn[d]=function(d,e){var f=arguments.length&&(c||"boolean"!=typeof d),g=c||(d===!0||e===!0?"margin":"border");return J(this,function(b,c,d){var e;return n.isWindow(b)?b.document.documentElement["client"+a]:9===b.nodeType?(e=b.documentElement,Math.max(b.body["scroll"+a],e["scroll"+a],b.body["offset"+a],e["offset"+a],e["client"+a])):void 0===d?n.css(b,c,g):n.style(b,c,d,g)},b,f?d:void 0,f,null)}})}),n.fn.size=function(){return this.length},n.fn.andSelf=n.fn.addBack,"function"==typeof define&&define.amd&&define("jquery",[],function(){return n});var Kb=a.jQuery,Lb=a.$;return n.noConflict=function(b){return a.$===n&&(a.$=Lb),b&&a.jQuery===n&&(a.jQuery=Kb),n},typeof b===U&&(a.jQuery=a.$=n),n});
+
+},{}]},{},[76]);

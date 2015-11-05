@@ -13,7 +13,6 @@ class MainElem extends BaseElem {
     show(){
         console.log(this.name)
         this.elem.style.display = 'block'
-        this.elem.style.backgroundColor = '#B8CCCA'
     }
 
 }

@@ -29,7 +29,6 @@ var MainElem = (function (_BaseElem) {
         value: function show() {
             console.log(this.name);
             this.elem.style.display = 'block';
-            this.elem.style.backgroundColor = '#B8CCCA';
         }
     }]);
 

@@ -1,13 +1,13 @@
-'use strict';
+"use strict";
 
 var CommentBox = React.createClass({
-  displayName: 'CommentBox',
+  displayName: "CommentBox",
 
   render: function render() {
     return React.createElement(
-      'div',
-      { className: 'commentBox', style: { backgroundColor: '#ADBDCC' } },
-      'Hello React'
+      "div",
+      { className: "commentBox" },
+      "Hello React"
     );
   }
 });
