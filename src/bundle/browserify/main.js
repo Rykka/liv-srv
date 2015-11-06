@@ -51,3 +51,5 @@ if (window.Worker) {
         }
     }
 }
+require('./react')
+

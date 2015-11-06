@@ -1,4 +1,4 @@
 
 module.exports = {
-    watch_list:[]
+    watch_list:[],
 }

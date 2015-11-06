@@ -25399,56 +25399,56 @@ module.exports = "<div>Hello <%- name %> ::\n<% _.forEach(stories, function(stor
 module.exports = "<div>\nHello {{ name }} ::\n{% for story in stories %}\n    <span >{{ story.name}}</span>\n    <span style='font-size:0.5em;'> {{ story.body }}</span>\n{% endfor %}\n{% if 33>3 %}\n    true\n{% endif %}\n</div>\n";
 
 },{}],80:[function(require,module,exports){
-postMessage('Start Working')
+'use strict';
 
-var stories = [{name:'1',body:'first'},{name:2,body:'second'}]
-var count = 100
-var t = new Date().getTime()
+postMessage('Start Working');
+
+var stories = [{ name: '1', body: 'first' }, { name: 2, body: 'second' }];
+var count = 100;
+var t = new Date().getTime();
 
 var _ = require('lodash');
 // _.templateSettings.interpolate = /{{([\s\S]+?)}}/g; // XXX Change This can not parse '('
-var lo_tpl, lo_html
+var lo_tpl, lo_html;
 
-for (var i=0; i < count; ++i) {
+for (var i = 0; i < count; ++i) {
     lo_tpl = _.template(require('tpl/lodash.tpl'));
-    lo_html = lo_tpl({name:'browserify:lodash template',stories:stories});
+    lo_html = lo_tpl({ name: 'browserify:lodash template', stories: stories });
 }
 
-var lo_t = new Date().getTime()
+var lo_t = new Date().getTime();
 
-postMessage({name:'lodash', time:(lo_t-t)})
+postMessage({ name: 'lodash', time: lo_t - t });
 
 var Handlebars = require('handlebars');
-var ha_tpl, ha_html
-for (var i=0; i < count; ++i) {
+var ha_tpl, ha_html;
+for (var i = 0; i < count; ++i) {
     ha_tpl = Handlebars.compile(require('tpl/handlebars.tpl'));
-    ha_html = ha_tpl({name:'browserify:handlebars template', stories: stories});
+    ha_html = ha_tpl({ name: 'browserify:handlebars template', stories: stories });
 }
-var ha_t = new Date().getTime()
-postMessage({name:'handlebars', time:ha_t-lo_t })
-
+var ha_t = new Date().getTime();
+postMessage({ name: 'handlebars', time: ha_t - lo_t });
 
 var art = require('art-template');
-var ar_tpl, ar_html
-for (var i=0; i < count; ++i) {
+var ar_tpl, ar_html;
+for (var i = 0; i < count; ++i) {
     ar_tpl = art.compile(require('tpl/art_template.tpl'));
-    ar_html = ar_tpl({name:'browserify:art_template', stories: stories});
+    ar_html = ar_tpl({ name: 'browserify:art_template', stories: stories });
 }
 
-var ar_t = new Date().getTime()
-postMessage({name:'art_template', time:ar_t-ha_t})
+var ar_t = new Date().getTime();
+postMessage({ name: 'art_template', time: ar_t - ha_t });
 
 var swig = require('swig');
-var sw_tpl, sw_html
-for (var i=0; i < count; ++i) {
+var sw_tpl, sw_html;
+for (var i = 0; i < count; ++i) {
     sw_tpl = swig.compile(require('tpl/swig.tpl'));
-    sw_html = sw_tpl({name:'browserify:swig template', stories: stories});
+    sw_html = sw_tpl({ name: 'browserify:swig template', stories: stories });
 }
 
-
-var sw_t = new Date().getTime()
-postMessage({name:'swig', time:sw_t-ar_t})
-postMessage('Finish Working')
-close()
+var sw_t = new Date().getTime();
+postMessage({ name: 'swig', time: sw_t - ar_t });
+postMessage('Finish Working');
+close();
 
 },{"art-template":3,"handlebars":36,"lodash":49,"swig":50,"tpl/art_template.tpl":76,"tpl/handlebars.tpl":77,"tpl/lodash.tpl":78,"tpl/swig.tpl":79}]},{},[80]);

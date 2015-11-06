@@ -9,6 +9,7 @@ var es = require('event-stream');
 var path = require('path')
 
 
+
 var stringify = require('stringify');
 var watch_list = require('gulp/config').watch_list
 
@@ -17,13 +18,14 @@ gulp.task('browserify', function(done){
     gutil.log('Bundle Browserify')
 
     // NOTE: ONLY Bundle the first dir of file.
-    glob('./src/js/browserify/*.js', function(err, files){
+    glob('./src/bundle/browserify/*.js', function(err, files){
 
         if (err) done(err);
 
         var tasks = files.map(function(entry) {
-            return browserify({paths:['./src/js/browserify']})
+            return browserify({paths:['./src/bundle/browserify', './bower_components']})
                 .transform(stringify(['.html', '.tpl']))
+                .transform("babelify", {presets: ["es2015", "react"]})
                 .add(entry)
                 .bundle()
                 .on('error', function(err){
@@ -66,4 +68,4 @@ gulp.task('browserify', function(done){
     //  .pipe(gulp.dest('./public/js'))
 })
 
-watch_list.push([['src/js/browserify/**/*.js', 'src/js/browserify/**/*.tpl'], ['browserify']])
+watch_list.push([['src/bundle/browserify/**/*.js', 'src/bundle/browserify/**/*.tpl'], ['browserify']])

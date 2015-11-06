@@ -25399,63 +25399,70 @@ module.exports = "<div>Hello <%- name %> ::\n<% _.forEach(stories, function(stor
 module.exports = "<div>\nHello {{ name }} ::\n{% for story in stories %}\n    <span >{{ story.name}}</span>\n    <span style='font-size:0.5em;'> {{ story.body }}</span>\n{% endfor %}\n{% if 33>3 %}\n    true\n{% endif %}\n</div>\n";
 
 },{}],80:[function(require,module,exports){
-postMessage('This is worker 2')
-console.log('worker 222')
+'use strict';
 
-var stories = [{name:'1',body:'first'},{name:2,body:'second'}]
-var count = 100
+postMessage('This is worker 2');
+console.log('worker 222');
+
+var stories = [{ name: '1', body: 'first' }, { name: 2, body: 'second' }];
+var count = 100;
 
 function post(item) {
-    console.log(item)
-    console.log(new Date().getTime())
-    postMessage(item)
+    console.log(item);
+    console.log(new Date().getTime());
+    postMessage(item);
 }
 
-var p_lo = new Promise(function(resolve, reject){
+var p_lo = new Promise(function (resolve, reject) {
     var _ = require('lodash');
-    var t = new Date().getTime()
-    var lo_tpl, lo_html
-    for (var i=0; i < count; ++i) {
+    var t = new Date().getTime();
+    var lo_tpl, lo_html;
+    for (var i = 0; i < count; ++i) {
         lo_tpl = _.template(require('tpl/lodash.tpl'));
-        lo_html = lo_tpl({name:'browserify:lodash template',stories:stories});
+        lo_html = lo_tpl({ name: 'browserify:lodash template', stories: stories });
     }
-    post({name:'lodash',  time:new Date().getTime() - t , num:count}) 
-    resolve({name:'lodash',  time:new Date().getTime() - t , num:count}) 
+    post({ name: 'lodash', time: new Date().getTime() - t, num: count });
+    resolve({ name: 'lodash', time: new Date().getTime() - t, num: count });
+});
 
-})
-
-var p_ha = new Promise(function(resolve, reject){
-    var tpl, html, eng = require('handlebars')
-    var t = new Date().getTime()
-    for (var i=0; i < count; ++i) {
+var p_ha = new Promise(function (resolve, reject) {
+    var tpl,
+        html,
+        eng = require('handlebars');
+    var t = new Date().getTime();
+    for (var i = 0; i < count; ++i) {
         tpl = eng.compile(require('tpl/handlebars.tpl'));
-        html = tpl({name:'browserify:handlebars template',stories:stories});
+        html = tpl({ name: 'browserify:handlebars template', stories: stories });
     }
-    resolve({name:'handlebars',  time:new Date().getTime() - t , num:count}) 
-    post({name:'handlebars',  time:new Date().getTime() - t , num:count}) 
-})
+    resolve({ name: 'handlebars', time: new Date().getTime() - t, num: count });
+    post({ name: 'handlebars', time: new Date().getTime() - t, num: count });
+});
 
-var p_ar = new Promise(function(resolve, rejectl){
-    var tpl, html, eng = require('art-template')
-    var t = new Date().getTime()
-    for (var i=0; i < count; ++i) {
+var p_ar = new Promise(function (resolve, rejectl) {
+    var tpl,
+        html,
+        eng = require('art-template');
+    var t = new Date().getTime();
+    for (var i = 0; i < count; ++i) {
         tpl = eng.compile(require('tpl/art_template.tpl'));
-        html = tpl({name:'browserify:art_template',stories:stories});
+        html = tpl({ name: 'browserify:art_template', stories: stories });
     }
-    post({name:'art_template',  time:new Date().getTime() - t , num:count}) 
-    resolve({name:'art_template',  time:new Date().getTime() - t , num:count}) 
-})
+    post({ name: 'art_template', time: new Date().getTime() - t, num: count });
+    resolve({ name: 'art_template', time: new Date().getTime() - t, num: count });
+});
 
-var p_sw = new Promise(function(resolve, rejectl){
-    var tpl, html, eng = require('swig')
-    var t = new Date().getTime()
-    for (var i=0; i < count; ++i) {
+var p_sw = new Promise(function (resolve, rejectl) {
+    var tpl,
+        html,
+        eng = require('swig');
+    var t = new Date().getTime();
+    for (var i = 0; i < count; ++i) {
         tpl = eng.compile(require('tpl/swig.tpl'));
-        html = tpl({name:'browserify:swig template',stories:stories});
+        html = tpl({ name: 'browserify:swig template', stories: stories });
     }
-    post({name:'swig',  time:new Date().getTime() - t , num:count}) 
-    resolve({name:'swig',  time:new Date().getTime() - t , num:count}) 
-})
+    post({ name: 'swig', time: new Date().getTime() - t, num: count });
+    resolve({ name: 'swig', time: new Date().getTime() - t, num: count });
+});
 
 // Promise.all([p_lo, p_ha, p_ar, p_sw])
 //     .then(function(list){

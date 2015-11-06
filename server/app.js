@@ -24,7 +24,8 @@ app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: false }));
 app.use(cookieParser());
 
-if (app.get('env') === 'development') {
+if (process.env.LIVERELOAD === 'TRUE') {
+    require('gulp-util').log('Livereload JS-Hooking started.')
     app.use(require('connect-livereload')({
         excludeList:['.js','.svg'] 
     }));

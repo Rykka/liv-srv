@@ -25,12 +25,11 @@ function debounce(fn, delay) {
   };
 }
 
-
 module.exports = {
     listen: function(port){
         port = port || 35729
         server.listen(port, function() {
-            gutil.log('livereload listening on %s ...', port);
+            gutil.log('Livereload server start on %s ...', port);
         })
     },
     reload: debounce(function(files){

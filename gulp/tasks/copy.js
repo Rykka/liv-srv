@@ -10,7 +10,6 @@ gulp.task('vanilla-js', function() {
         .pipe(gulp.dest('./public/js'))
 });
 
-
 gulp.task('vanilla-css', function() {
     gutil.log('Copy vanilla-css');
     gulp.src('./src/css/vanilla/**/*.css')
@@ -22,7 +21,7 @@ gulp.task('vanilla-html', function() {
     gutil.log('Copy vanilla-html');
     gulp.src('./src/html/vanilla/**/*.html')
         .pipe(plumber())
-        .pipe(gulp.dest('./views'))
+        .pipe(gulp.dest('./server/views'))
 });
 
 gulp.task('img', function() {
@@ -38,6 +37,7 @@ gulp.task('ico', function() {
         .pipe(plumber())
         .pipe(gulp.dest('./public'))
 });
+
 
 gulp.task('copy', ['vanilla-js', 'vanilla-css','vanilla-html', 'img', 'ico'])
 
