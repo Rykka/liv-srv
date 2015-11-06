@@ -22,7 +22,6 @@ var HelloMessage = React.createClass({
 console.log(React)
 console.log(ReactDOM)
 
-
 ReactDOM.render(<HelloMessage name="Webpack React" />, $('#webpack').removeClass('hide').get(0));
 
 
